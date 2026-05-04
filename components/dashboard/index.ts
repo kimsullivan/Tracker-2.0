@@ -1,0 +1,15 @@
+/** Minimal dashboard types for Lookback `Sidebar` (full app shell lives elsewhere). */
+export type TabType =
+  | "tracker"
+  | "matches"
+  | "peers"
+  | "hidden"
+  | "awards"
+  | "applications"
+  | "hq-dashboard"
+  | "hq-approvals"
+  | "calendar"
+  | "tasks"
+  | "reports"
+  | "documents"
+  | "projects"
