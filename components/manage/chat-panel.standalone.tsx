@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import { ArrowUp, Sparkles, X } from "lucide-react"
+import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Markdown } from "@/components/ui/markdown"
@@ -14,6 +15,7 @@ import {
   ChatInlineViz,
   ChatSources,
   type ChatSource,
+  type ChatTaskAction,
   type ChatViz,
 } from "@/components/manage/chat-inline-viz"
 
@@ -94,6 +96,15 @@ function defaultManageInitialMessages(): StandaloneAgentMessage[] {
   ]
 }
 
+/** First thread + chips for the default manage / command-center assistant (Maria morning brief). */
+export function getManageAssistantInitialMessages(): StandaloneAgentMessage[] {
+  return defaultManageInitialMessages()
+}
+
+export function getManageAssistantSuggestions(): string[] {
+  return [...SUGGESTIONS]
+}
+
 /** Visible thinking dwell before exit animation + reply (ms) */
 const THINKING_DELAY_MIN = 520
 const THINKING_DELAY_SPREAD = 420
@@ -118,16 +129,46 @@ const USER_TWILIGHT_BUBBLE =
   "dark:from-[hsl(260_22%_23%)] dark:via-[hsl(270_20%_21%)] dark:to-[hsl(255_24%_24%)] " +
   "dark:text-[hsl(285_32%_88%)] dark:ring-white/12"
 
+/** How long each thinking-line stays visible before rotating (ms) */
+const THINKING_ROTATION_MS = 700
+
+const THINKING_STEPS = [
+  {
+    lead: "Thinking through your portfolio…",
+    detail: "Cross-checking grants, pipeline signals, and ownership load.",
+  },
+  {
+    lead: "Synthesizing signals…",
+    detail: "Balancing federal exposure, capacity, and timing.",
+  },
+  {
+    lead: "Almost ready…",
+    detail: "Structuring the clearest next moves to surface for you.",
+  },
+] as const
+
 function ThinkingShimmer() {
+  const [step, setStep] = useState(0)
+
+  useEffect(() => {
+    setStep(0)
+    const id = window.setInterval(() => {
+      setStep((s) => (s + 1) % THINKING_STEPS.length)
+    }, THINKING_ROTATION_MS)
+    return () => clearInterval(id)
+  }, [])
+
+  const copy = THINKING_STEPS[step]
+
   return (
-    <div className="rounded-xl border border-border/35 bg-muted/25 px-3 py-2.5 backdrop-blur-[2px]" aria-live="polite">
-      <div className="space-y-1.5">
-        <p className="chat-thinking-shimmer text-[14px] font-medium leading-snug">
-          Thinking through your portfolio…
-        </p>
-        <p className="text-[12px] leading-snug text-muted-foreground/85">
-          Cross-checking grants, pipeline signals, and ownership load.
-        </p>
+    <div
+      className="rounded-xl border border-border/35 bg-muted/25 px-3 py-2.5 backdrop-blur-[2px]"
+      aria-live="polite"
+      aria-busy="true"
+    >
+      <div className="space-y-1.5" key={step}>
+        <p className="chat-thinking-shimmer text-[13px] font-medium leading-snug md:text-[14px]">{copy.lead}</p>
+        <p className="text-[11px] leading-snug text-muted-foreground/85 md:text-[12px]">{copy.detail}</p>
       </div>
     </div>
   )
@@ -260,6 +301,21 @@ export function ChatPanelStandalone({
     bottomRef.current?.scrollIntoView({ behavior: "smooth" })
   }, [])
 
+  const handleTaskAction = useCallback((action: ChatTaskAction) => {
+    const { toastTitle, toastDescription, followUpBody } = taskFollowThrough(action)
+    toast.success(toastTitle, { description: toastDescription })
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        role: "agent",
+        markdown: true,
+        at: Date.now(),
+        body: followUpBody,
+      },
+    ])
+  }, [])
+
   useEffect(() => {
     scrollToBottom()
   }, [messages, thinkingPhase, scrollToBottom])
@@ -332,7 +388,12 @@ export function ChatPanelStandalone({
       }
       aria-label={`${panelTitle} — ${contextLabel}`}
     >
-      <header className="flex shrink-0 items-center justify-between gap-2 px-4 py-3">
+      <header
+        className={cn(
+          "flex shrink-0 items-center justify-between gap-2",
+          isEmbedded ? "px-5 py-4" : "px-4 py-3",
+        )}
+      >
         <div className="flex min-w-0 items-center gap-1.5">
           <Sparkles className="h-3 w-3 shrink-0 text-primary" strokeWidth={2} aria-hidden />
           <span className="truncate text-[15px] font-semibold tracking-tight text-foreground">{panelTitle}</span>
@@ -349,7 +410,12 @@ export function ChatPanelStandalone({
         ) : null}
       </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-3 pt-1">
+      <div
+        className={cn(
+          "min-h-0 flex-1 overflow-y-auto",
+          isEmbedded ? "px-5 pb-4 pt-2" : "px-4 pb-3 pt-1",
+        )}
+      >
         <div className="space-y-8">
           {messages.map((m) =>
             m.role === "agent" ? (
@@ -360,6 +426,7 @@ export function ChatPanelStandalone({
                 scrollToBottom={scrollToBottom}
                 maxStreamMs={streamMaxMs}
                 panelVariant={variant}
+                onTaskAction={handleTaskAction}
               />
             ) : (
               <div key={m.id} className="flex flex-col items-end gap-1">
@@ -390,7 +457,8 @@ export function ChatPanelStandalone({
 
       <div
         className={cn(
-          "shrink-0 space-y-2 px-3 py-3",
+          "shrink-0 space-y-2",
+          isEmbedded ? "px-4 py-4" : "px-3 py-3",
           isEmbedded ? "bg-background" : "bg-card/50 backdrop-blur-sm",
         )}
       >
@@ -448,12 +516,14 @@ function AgentMessageTurn({
   scrollToBottom,
   maxStreamMs,
   panelVariant = "manage",
+  onTaskAction,
 }: {
   m: AgentMessage
   mdClass: string
   scrollToBottom: () => void
   maxStreamMs?: number
   panelVariant?: "manage" | "operator"
+  onTaskAction?: (action: ChatTaskAction) => void
 }) {
   const [streamDone, setStreamDone] = useState(false)
 
@@ -480,7 +550,12 @@ function AgentMessageTurn({
                 return (
                   <div className="mt-4 space-y-3 border-t border-border/40 pt-3">
                     {taskBlocks.map((block, i) => (
-                      <ChatInlineViz key={`${m.id}-viz-task-${i}`} viz={block} staggerMs={i * 100} />
+                      <ChatInlineViz
+                        key={`${m.id}-viz-task-${i}`}
+                        viz={block}
+                        staggerMs={i * 100}
+                        onTaskAction={onTaskAction}
+                      />
                     ))}
                   </div>
                 )
@@ -503,6 +578,7 @@ function AgentMessageTurn({
                       key={`${m.id}-viz-task-${i}`}
                       viz={block}
                       staggerMs={(kpiBlocks.length + i) * 100}
+                      onTaskAction={onTaskAction}
                     />
                   ))}
                 </div>
@@ -520,6 +596,43 @@ function AgentMessageTurn({
       ) : null}
     </article>
   )
+}
+
+function taskFollowThrough(action: ChatTaskAction): {
+  toastTitle: string
+  toastDescription: string
+  followUpBody: string
+} {
+  const L = action.label.toLowerCase()
+  if (L.includes("finance") && L.includes("loop")) {
+    return {
+      toastTitle: "Finance looped in",
+      toastDescription: "Match-capacity thread updated — watch the grants inbox.",
+      followUpBody:
+        "**Loop in finance** — done. Finance is on the federal match-capacity thread (~$**370K** across three applications). **A. Park (Finance)** will follow up in the grants inbox.",
+    }
+  }
+  if (L.includes("math") || L.includes("see the math")) {
+    return {
+      toastTitle: "Match model opened",
+      toastDescription: "SAMHSA scenario tab pinned in the workbook.",
+      followUpBody:
+        "**See the math** — opened the match model workbook and pinned the **SAMHSA** scenario for you.",
+    }
+  }
+  if (L.includes("draft") && L.includes("outreach")) {
+    return {
+      toastTitle: "Outreach draft started",
+      toastDescription: "Template saved under Shared drafts.",
+      followUpBody:
+        "**Draft outreach** — started a **Skoll** intro draft from the Nina / Reyes template. Check **Shared drafts** for the editable version.",
+    }
+  }
+  return {
+    toastTitle: action.label,
+    toastDescription: "Recorded in this workspace (prototype).",
+    followUpBody: `**${action.label}** — recorded. In a live workspace this control would run the full workflow behind it.`,
+  }
 }
 
 function buildAgentReply(

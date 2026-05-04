@@ -17,7 +17,7 @@ export function AgentRail({ contextLabel }: { contextLabel: string }) {
         }}
         aria-label="Open assistant"
       >
-        <Sparkles className="h-5 w-5" />
+        <Sparkles className="h-5 w-5 text-primary-foreground" strokeWidth={1.75} aria-hidden />
         <span className="absolute -top-1 -right-1 h-3 w-3 rounded-full bg-chart-3 ring-2 ring-background" />
       </button>
     )

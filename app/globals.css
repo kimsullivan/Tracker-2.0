@@ -5,7 +5,8 @@
 
 :root {
   --radius: 0.75rem;
-  --shadow: 0px 4px 24px -1px rgb(15 62 24 / 0.1);
+  /* Tighter elevation: smaller blur/spread for inputs, selects, outline buttons (shadow-xs/sm) */
+  --shadow: 0px 2px 6px -1px rgb(15 62 24 / 0.09);
   --text-lg: 1.25rem;
   --text-sm: 1rem;
   --text-xl: 1.5rem;
@@ -16,14 +17,14 @@
   --text-5xl: 4rem;
   --font-body: var(--font-lato);
   --font-heading: var(--font-lato);
-  --shadow-lg: 0px 4px 24px -1px rgb(15 62 24 / 0.1);
-  --shadow-md: 0px 4px 24px -1px rgb(15 62 24 / 0.1);
-  --shadow-sm: 0px 4px 24px -1px rgb(15 62 24 / 0.1);
-  --shadow-xl: 0px 4px 24px -1px rgb(15 62 24 / 0.1);
-  --shadow-xs: 0px 4px 24px -1px rgb(15 62 24 / 0.1);
+  --shadow-lg: 0px 6px 16px -3px rgb(15 62 24 / 0.12);
+  --shadow-md: 0px 4px 10px -2px rgb(15 62 24 / 0.1);
+  --shadow-sm: 0px 1px 3px 0px rgb(15 62 24 / 0.07);
+  --shadow-xl: 0px 10px 24px -4px rgb(15 62 24 / 0.13);
+  --shadow-xs: 0px 1px 2px 0px rgb(15 62 24 / 0.05);
   --text-base: 1rem;
-  --shadow-2xl: 0px 4px 24px -1px rgb(15 62 24 / 0.1);
-  --shadow-2xs: 0px 4px 24px -1px rgb(15 62 24 / 0.1);
+  --shadow-2xl: 0px 16px 40px -6px rgb(15 62 24 / 0.16);
+  --shadow-2xs: 0px 1px 1px 0px rgb(15 62 24 / 0.035);
 
   --card: #ffffff;
   --ring: #5a56b3;
@@ -46,9 +47,9 @@
   --viz-ramp-6: hsl(262 48% 48%);
   --popover: #ffffff;
   --primary: #5a56b3;
-  --sidebar: #fffefc;
+  --sidebar: #ffffff;
   --secondary: #f1f1f9;
-  --background: #fffefc;
+  --background: #ffffff;
   --foreground: #090830;
   --destructive: #ef4444;
   --sidebar-ring: #5a56b3;

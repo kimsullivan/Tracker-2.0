@@ -40,16 +40,25 @@ export type ChatVizTasks = {
 
 export type ChatViz = ChatVizSparkline | ChatVizMetrics | ChatVizTasks
 
+export type ChatTaskAction = { label: string; href: string }
+
 export function ChatSources({ sources }: { sources: ChatSource[] }) {
   if (!sources.length) return null
   return (
-    <div className="mt-4 border-t border-border/45 pt-3">
-      <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Sources</p>
-      <div className="flex flex-wrap gap-2">
+    <div className="mt-3 border-t border-border/45 pt-2.5">
+      <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Sources</p>
+      <div className="flex flex-wrap gap-1.5">
         {sources.map((s, i) => (
           <Source key={`${s.href}-${s.title}-${i}`} href={s.href}>
-            <SourceTrigger label={i + 1} />
-            <SourceContent title={s.title} description={s.detail} />
+            <SourceTrigger
+              label={i + 1}
+              className="h-5 max-w-[7.5rem] px-1.5 text-[10px] leading-none"
+            />
+            <SourceContent
+              title={s.title}
+              description={s.detail}
+              className="w-[min(100vw-2rem,17.5rem)] [&_a]:gap-1.5 [&_a]:p-2.5 [&_a_.font-medium]:text-xs [&_a_.text-muted-foreground]:text-[11px] [&_a_.text-muted-foreground]:leading-snug"
+            />
           </Source>
         ))}
       </div>
@@ -78,7 +87,16 @@ const TASK_ICON_GLYPH: Record<NonNullable<ChatVizTasks["items"][number]["tone"]>
   signal: "text-emerald-800 dark:text-emerald-200",
 }
 
-export function ChatInlineViz({ viz, staggerMs = 0 }: { viz: ChatViz; staggerMs?: number }) {
+export function ChatInlineViz({
+  viz,
+  staggerMs = 0,
+  onTaskAction,
+}: {
+  viz: ChatViz
+  staggerMs?: number
+  /** When set, task buttons run this instead of opening links (prototype follow-through). */
+  onTaskAction?: (action: ChatTaskAction) => void
+}) {
   const gradId = useId().replace(/:/g, "")
 
   if (viz.kind === "tasks") {
@@ -127,19 +145,32 @@ export function ChatInlineViz({ viz, staggerMs = 0 }: { viz: ChatViz; staggerMs?
                   ) : null}
               {item.actions?.length ? (
                 <div className="mt-2 flex flex-wrap gap-1.5">
-                  {item.actions.map((a, idx) => (
-                    <Button
-                      key={a.label}
-                      variant={idx === 0 ? "default" : "outline"}
-                      size="sm"
-                      className="h-6 min-h-6 rounded-md px-2 py-0 !text-[10px] font-medium leading-none shadow-none"
-                      asChild
-                    >
-                      <a href={a.href} target="_blank" rel="noreferrer">
+                  {item.actions.map((a, idx) =>
+                    onTaskAction ? (
+                      <Button
+                        key={`${a.label}-${idx}`}
+                        type="button"
+                        variant={idx === 0 ? "default" : "outline"}
+                        size="sm"
+                        className="h-6 min-h-6 rounded-md px-2 py-0 !text-[10px] font-medium leading-none shadow-none"
+                        onClick={() => onTaskAction(a)}
+                      >
                         {a.label}
-                      </a>
-                    </Button>
-                  ))}
+                      </Button>
+                    ) : (
+                      <Button
+                        key={`${a.label}-${idx}`}
+                        variant={idx === 0 ? "default" : "outline"}
+                        size="sm"
+                        className="h-6 min-h-6 rounded-md px-2 py-0 !text-[10px] font-medium leading-none shadow-none"
+                        asChild
+                      >
+                        <a href={a.href} target="_blank" rel="noreferrer">
+                          {a.label}
+                        </a>
+                      </Button>
+                    ),
+                  )}
                 </div>
               ) : null}
               </div>

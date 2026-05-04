@@ -1,7 +1,7 @@
 "use client"
 
 import { Suspense } from "react"
-import { Bell, Search, Settings } from "lucide-react"
+import { Bell, Plus, Search, Settings } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -12,10 +12,10 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { PrototypeSwitcher } from "@/components/manage/prototype-switcher"
 
-export function TopBar() {
+export function TopBar({ showNewGrant = false }: { showNewGrant?: boolean }) {
   return (
-    <header className="sticky top-0 z-40 flex h-14 items-center gap-4 bg-sidebar/95 px-4 backdrop-blur supports-[backdrop-filter]:bg-sidebar/80">
-      <span className="font-heading shrink-0 font-bold text-sidebar-foreground">Tracker</span>
+    <header className="sticky top-0 z-40 flex h-14 items-center gap-4 border-b border-border bg-background px-4">
+      <span className="font-heading shrink-0 font-bold text-foreground">Tracker</span>
 
       <div className="relative hidden min-w-0 flex-1 md:block">
         <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -26,6 +26,16 @@ export function TopBar() {
       </div>
 
       <div className="ml-auto flex shrink-0 items-center gap-2">
+        {showNewGrant ? (
+          <Button
+            type="button"
+            size="sm"
+            className="h-8 gap-1 rounded-md px-2.5 text-xs font-medium"
+          >
+            <Plus className="h-3.5 w-3.5" aria-hidden />
+            New grant
+          </Button>
+        ) : null}
         <Button size="icon" variant="ghost" className="h-8 w-8" aria-label="Notifications">
           <Bell className="h-4 w-4" />
         </Button>

@@ -26,20 +26,27 @@ export function CommandCenter({ onOpenGrant }: { onOpenGrant: (id: string) => vo
     <div className="mx-auto w-full max-w-[min(100%,88rem)] space-y-7 px-8 py-8 md:px-10">
       <Greeting />
       <PulseStrip />
-      <div className="grid gap-7 lg:grid-cols-[1fr_22rem] xl:grid-cols-[1fr_24rem]">
-        <div className="min-w-0 space-y-7">
-          <ActionQueue onOpenGrant={onOpenGrant} />
-        </div>
-        <div className="min-w-0 space-y-6">
-          <AnomaliesPanel />
-          <TeamLoad />
-        </div>
+      <CommandCenterWorkspace onOpenGrant={onOpenGrant} />
+    </div>
+  )
+}
+
+/** Main column layout: queue + right rail. Tasks column ~2/3 width; grid stays fluid with the container. */
+export function CommandCenterWorkspace({ onOpenGrant }: { onOpenGrant: (id: string) => void }) {
+  return (
+    <div className="grid w-full grid-cols-1 gap-7 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+      <div className="min-w-0 space-y-7">
+        <ActionQueue onOpenGrant={onOpenGrant} />
+      </div>
+      <div className="min-w-0 space-y-6">
+        <AnomaliesPanel />
+        <TeamLoad />
       </div>
     </div>
   )
 }
 
-function Greeting() {
+export function Greeting() {
   const date = new Date().toLocaleDateString("en-US", {
     weekday: "long",
     month: "long",
@@ -65,7 +72,7 @@ function Greeting() {
   )
 }
 
-function PulseStrip() {
+export function PulseStrip() {
   return (
     <div className="grid w-full min-w-0 grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
       <PipelineCard />

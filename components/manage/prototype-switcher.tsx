@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils"
 const MODES = [
   { param: null as string | null, label: "Static command center" },
   { param: "operator" as const, label: "Operator chat" },
+  { param: "mixed" as const, label: "Mixed" },
 ]
 
 export function PrototypeSwitcher({
@@ -18,15 +19,14 @@ export function PrototypeSwitcher({
   const router = useRouter()
   const pathname = usePathname()
   const searchParams = useSearchParams()
-  const active =
-    searchParams.get("prototype") === "operator" ? "operator" : "static"
+  const current = searchParams.get("prototype")
 
-  function setMode(next: "static" | "operator") {
+  function setPrototype(param: string | null) {
     const p = new URLSearchParams(searchParams.toString())
-    if (next === "static") {
+    if (param === null || param === "") {
       p.delete("prototype")
     } else {
-      p.set("prototype", "operator")
+      p.set("prototype", param)
     }
     const q = p.toString()
     router.push(q ? `${pathname}?${q}` : pathname)
@@ -44,15 +44,15 @@ export function PrototypeSwitcher({
       aria-label="Prototype mode"
     >
       {MODES.map((m) => {
-        const isOperator = m.param === "operator"
-        const selected = isOperator ? active === "operator" : active === "static"
+        const selected =
+          m.param === null ? current === null || current === "" : current === m.param
         return (
           <button
             key={m.label}
             type="button"
             role="tab"
             aria-selected={selected}
-            onClick={() => setMode(isOperator ? "operator" : "static")}
+            onClick={() => setPrototype(m.param)}
             className={cn(
               layout === "vertical"
                 ? "w-full rounded-md border border-transparent px-2.5 py-2 text-left text-[11px] font-medium transition-colors"

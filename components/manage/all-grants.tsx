@@ -1,6 +1,7 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
+import type { ReactNode, RefObject } from "react"
 import { grants as grantsData, stageOrder, team } from "@/lib/manage/data"
 import type { Grant, Stage } from "@/lib/manage/types"
 import { cn } from "@/lib/utils"
@@ -251,12 +252,26 @@ type OperatorSavedView = { id: string; label: string; config: OperatorViewConfig
 export function AllGrants({
   onOpenGrant,
   variant = "default",
-  operatorChatOpen = false,
+  showToolbarNewGrant = true,
+  flatChrome = false,
+  pageScrollMode = false,
+  pageScrollContainerRef,
+  stickyFilterPrefix,
 }: {
   onOpenGrant: (id: string) => void
   variant?: "default" | "operator"
-  /** When open, shows a right-edge fade toward the operator chat (operator layout only). */
-  operatorChatOpen?: boolean
+  /** Set false when "New grant" lives in the app header instead. */
+  showToolbarNewGrant?: boolean
+  /** Operator layout: omit the outer card shadow (e.g. mixed prototype). */
+  flatChrome?: boolean
+  /**
+   * Vertical scroll lives on an ancestor (e.g. KPIs scroll away; toolbar + table header stay sticky).
+   * Provide `pageScrollContainerRef` to that scrollable element for shadow / scroll sync.
+   */
+  pageScrollMode?: boolean
+  pageScrollContainerRef?: RefObject<HTMLDivElement | null>
+  /** Stuck with filter toolbar + table header (e.g. My work / All grants toggle in mixed prototype). */
+  stickyFilterPrefix?: ReactNode
 }) {
   const [selectedViewId, setSelectedViewId] = useState("all")
   const [customViews, setCustomViews] = useState<OperatorSavedView[]>([])
@@ -284,17 +299,61 @@ export function AllGrants({
   const [colOrder, setColOrder] = useState<ColKey[]>(() => [...NON_GRANT_COLUMN_KEYS])
   const [draggingCol, setDraggingCol] = useState<ColKey | null>(null)
   const tableScrollRef = useRef<HTMLDivElement>(null)
+  const stickyStackRef = useRef<HTMLDivElement>(null)
+  const [stickyStackH, setStickyStackH] = useState(120)
   const [showPinnedScrollShadow, setShowPinnedScrollShadow] = useState(false)
   const [showStickyHeaderShadow, setShowStickyHeaderShadow] = useState(false)
 
   const updateTableScrollShadows = useCallback(() => {
-    const el = tableScrollRef.current
+    const horiz = tableScrollRef.current
+    if (horiz) {
+      const { scrollLeft, scrollWidth, clientWidth } = horiz
+      const maxScroll = Math.max(0, scrollWidth - clientWidth)
+      setShowPinnedScrollShadow(maxScroll > 1 && scrollLeft > 1)
+    }
+
+    if (pageScrollMode && pageScrollContainerRef?.current) {
+      setShowStickyHeaderShadow(pageScrollContainerRef.current.scrollTop > 2)
+    } else if (horiz) {
+      setShowStickyHeaderShadow(horiz.scrollTop > 2)
+    }
+  }, [pageScrollMode, pageScrollContainerRef])
+
+  useLayoutEffect(() => {
+    if (!pageScrollMode) return
+    const el = stickyStackRef.current
     if (!el) return
-    const { scrollLeft, scrollTop, scrollWidth, clientWidth } = el
-    const maxScroll = Math.max(0, scrollWidth - clientWidth)
-    setShowPinnedScrollShadow(maxScroll > 1 && scrollLeft > 1)
-    setShowStickyHeaderShadow(scrollTop > 2)
-  }, [])
+    const measure = () => setStickyStackH(el.offsetHeight)
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [pageScrollMode, stickyFilterPrefix, selected.size, groupBy, visibleCols, colOrder, variant])
+
+  useEffect(() => {
+    const onScroll = () => updateTableScrollShadows()
+    const horiz = tableScrollRef.current
+    const outer = pageScrollContainerRef?.current
+
+    if (pageScrollMode) {
+      if (outer) {
+        outer.addEventListener("scroll", onScroll, { passive: true })
+        horiz?.addEventListener("scroll", onScroll, { passive: true })
+        onScroll()
+        return () => {
+          outer.removeEventListener("scroll", onScroll)
+          horiz?.removeEventListener("scroll", onScroll)
+        }
+      }
+      return
+    }
+
+    if (horiz) {
+      horiz.addEventListener("scroll", onScroll, { passive: true })
+      onScroll()
+      return () => horiz.removeEventListener("scroll", onScroll)
+    }
+  }, [pageScrollMode, pageScrollContainerRef, updateTableScrollShadows])
 
   const builtinSlice = useMemo(() => {
     if (variant === "operator" && selectedViewId.startsWith("custom-")) {
@@ -494,110 +553,99 @@ export function AllGrants({
     toast("View saved", { description: `“${name}” is in the View menu.` })
   }
 
-  return (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-      <div
-        className={cn(
-          "flex min-h-0 min-w-0 flex-1 flex-col",
-          variant === "operator" &&
-            "overflow-hidden rounded-[12px] border border-border/80 bg-background shadow-sm ring-1 ring-black/[0.04] dark:ring-white/[0.06]",
-        )}
-      >
-      {/* Toolbar: single row — view, filters, grouping — columns / new grant right */}
-      <div
-        className={cn(
-          "flex flex-nowrap items-center gap-x-2 overflow-x-auto overflow-y-hidden px-6 py-2 scrollbar-thin",
-          variant === "operator" ? "border-b-0 bg-background" : "border-b border-border bg-background",
-        )}
-      >
-        <div className="flex min-w-0 flex-nowrap items-center gap-x-2">
-          <span className="shrink-0 text-[11px] font-medium text-muted-foreground">View</span>
-          <Select
-            value={selectedViewId}
-            onValueChange={(id) => {
-              setSelectedViewId(id)
-              if (variant === "operator" && id.startsWith("custom-")) {
-                const cv = customViews.find((v) => v.id === id)
-                if (cv) applyOperatorViewConfig(cv.config)
-              } else {
-                setFilters((prev) => {
-                  const next = applyViewFilters(id, prev)
-                  setFilterBaseline({ ...next })
-                  return next
-                })
-              }
-            }}
-          >
-            <SelectTrigger size="sm" className="h-7 w-[min(100%,11rem)] text-xs shadow-xs">
-              <SelectValue placeholder="Select view" />
-            </SelectTrigger>
-            <SelectContent>
-              {SAVED_VIEWS.map((v) => (
+  const groupStickyTopPx = pageScrollMode ? stickyStackH : 37
+
+  const filterToolbarInner = (
+    <>
+      <div className="flex min-w-0 flex-nowrap items-center gap-x-2">
+        <span className="shrink-0 text-[11px] font-medium text-muted-foreground">View</span>
+        <Select
+          value={selectedViewId}
+          onValueChange={(id) => {
+            setSelectedViewId(id)
+            if (variant === "operator" && id.startsWith("custom-")) {
+              const cv = customViews.find((v) => v.id === id)
+              if (cv) applyOperatorViewConfig(cv.config)
+            } else {
+              setFilters((prev) => {
+                const next = applyViewFilters(id, prev)
+                setFilterBaseline({ ...next })
+                return next
+              })
+            }
+          }}
+        >
+          <SelectTrigger size="sm" className="h-7 w-[min(100%,11rem)] text-xs shadow-xs">
+            <SelectValue placeholder="Select view" />
+          </SelectTrigger>
+          <SelectContent>
+            {SAVED_VIEWS.map((v) => (
+              <SelectItem key={v.id} value={v.id} className="text-xs">
+                {v.label}
+              </SelectItem>
+            ))}
+            {variant === "operator" &&
+              customViews.map((v) => (
                 <SelectItem key={v.id} value={v.id} className="text-xs">
                   {v.label}
                 </SelectItem>
               ))}
-              {variant === "operator" &&
-                customViews.map((v) => (
-                  <SelectItem key={v.id} value={v.id} className="text-xs">
-                    {v.label}
-                  </SelectItem>
-                ))}
-            </SelectContent>
-          </Select>
-          {variant === "operator" && filtersDirty && (
-            <button
-              type="button"
-              onClick={() => {
-                setSaveViewName("")
-                setSaveViewOpen(true)
-              }}
-              title="Save columns, filters & grouping as a reusable view"
-              className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md border border-dashed border-border px-2 text-[11px] text-muted-foreground hover:border-foreground/40 hover:text-foreground"
-            >
-              <Bookmark className="h-3 w-3" />
-              Save view
-            </button>
-          )}
-
-          <div className="mx-1 hidden h-5 w-px shrink-0 bg-border sm:block" aria-hidden />
-
-          <FilterChip
-            label="Fiscal year"
-            value={filters.fiscalYear}
-            options={fiscalYearOptions}
-            onChange={(v) => setFilters({ ...filters, fiscalYear: v })}
-          />
-          <FilterChip
-            label="Funder type"
-            value={filters.funderType}
-            options={["Federal", "Private", "Corporate", "State", "Local"]}
-            onChange={(v) => setFilters({ ...filters, funderType: v })}
-          />
-          <FilterChip
-            label="Owner"
-            value={filters.owner ? team.find((t) => t.id === filters.owner)?.name || filters.owner : null}
-            options={team.map((t) => t.name)}
-            onChange={(v) => {
-              const member = team.find((t) => t.name === v)
-              setFilters({ ...filters, owner: member?.id ?? null })
-            }}
-          />
+          </SelectContent>
+        </Select>
+        {variant === "operator" && filtersDirty && (
           <button
             type="button"
+            onClick={() => {
+              setSaveViewName("")
+              setSaveViewOpen(true)
+            }}
+            title="Save columns, filters & grouping as a reusable view"
             className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md border border-dashed border-border px-2 text-[11px] text-muted-foreground hover:border-foreground/40 hover:text-foreground"
           >
-            <Plus className="h-3 w-3" />
-            Filter
+            <Bookmark className="h-3 w-3" />
+            Save view
           </button>
+        )}
 
-          <div className="mx-1 h-5 w-px shrink-0 bg-border" aria-hidden />
+        <div className="mx-1 hidden h-5 w-px shrink-0 bg-border sm:block" aria-hidden />
 
-          <GroupByPicker value={groupBy} onChange={setGroupBy} />
-        </div>
+        <FilterChip
+          label="Fiscal year"
+          value={filters.fiscalYear}
+          options={fiscalYearOptions}
+          onChange={(v) => setFilters({ ...filters, fiscalYear: v })}
+        />
+        <FilterChip
+          label="Funder type"
+          value={filters.funderType}
+          options={["Federal", "Private", "Corporate", "State", "Local"]}
+          onChange={(v) => setFilters({ ...filters, funderType: v })}
+        />
+        <FilterChip
+          label="Owner"
+          value={filters.owner ? team.find((t) => t.id === filters.owner)?.name || filters.owner : null}
+          options={team.map((t) => t.name)}
+          onChange={(v) => {
+            const member = team.find((t) => t.name === v)
+            setFilters({ ...filters, owner: member?.id ?? null })
+          }}
+        />
+        <button
+          type="button"
+          className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md border border-dashed border-border px-2 text-[11px] text-muted-foreground hover:border-foreground/40 hover:text-foreground"
+        >
+          <Plus className="h-3 w-3" />
+          Filter
+        </button>
 
-        <div className="ml-auto flex shrink-0 flex-nowrap items-center justify-end gap-2">
-          <ColumnPicker visible={visibleCols} onToggle={toggleColumn} />
+        <div className="mx-1 h-5 w-px shrink-0 bg-border" aria-hidden />
+
+        <GroupByPicker value={groupBy} onChange={setGroupBy} />
+      </div>
+
+      <div className="ml-auto flex shrink-0 flex-nowrap items-center justify-end gap-2">
+        <ColumnPicker visible={visibleCols} onToggle={toggleColumn} />
+        {showToolbarNewGrant ? (
           <button
             type="button"
             className="inline-flex h-7 items-center gap-1 rounded-md bg-primary px-2.5 text-[11px] font-medium text-primary-foreground hover:bg-primary/90"
@@ -605,82 +653,147 @@ export function AllGrants({
             <Plus className="h-3 w-3" />
             New grant
           </button>
-        </div>
+        ) : null}
       </div>
+    </>
+  )
 
-      {/* Bulk action bar */}
-      {selected.size > 0 && (
-        <div className="flex items-center gap-3 border-b border-border bg-primary/5 px-6 py-2">
-          <span className="text-xs font-medium text-foreground">{selected.size} selected</span>
-          <button className="rounded-md border border-border bg-background px-2 py-1 text-[11px] hover:bg-muted">
-            Reassign
-          </button>
-          <button className="rounded-md border border-border bg-background px-2 py-1 text-[11px] hover:bg-muted">
-            Set status
-          </button>
-          <button className="rounded-md border border-border bg-background px-2 py-1 text-[11px] hover:bg-muted">
-            Add tag
-          </button>
-          <button onClick={() => setSelected(new Set())} className="ml-auto text-[11px] text-muted-foreground hover:text-foreground">
-            Clear
-          </button>
-        </div>
+  const bulkBar =
+    selected.size > 0 ? (
+      <div
+        className={cn(
+          "flex items-center gap-3 border-b border-border bg-primary/5 py-2",
+          variant === "operator" ? "px-3" : "px-6",
+        )}
+      >
+        <span className="text-xs font-medium text-foreground">{selected.size} selected</span>
+        <button className="rounded-md border border-border bg-background px-2 py-1 text-[11px] hover:bg-muted">
+          Reassign
+        </button>
+        <button className="rounded-md border border-border bg-background px-2 py-1 text-[11px] hover:bg-muted">
+          Set status
+        </button>
+        <button className="rounded-md border border-border bg-background px-2 py-1 text-[11px] hover:bg-muted">
+          Add tag
+        </button>
+        <button onClick={() => setSelected(new Set())} className="ml-auto text-[11px] text-muted-foreground hover:text-foreground">
+          Clear
+        </button>
+      </div>
+    ) : null
+
+  const columnHeaderRow = (inPageStickyStack: boolean) => (
+    <div
+      className={cn(
+        "z-40 grid w-max items-stretch border-b border-border",
+        !inPageStickyStack && "sticky top-0",
+        showStickyHeaderShadow && "shadow-sm",
+        variant === "operator" && "border-t-0",
+        variant === "operator" ? "bg-background" : "bg-muted",
       )}
+      style={{ gridTemplateColumns: `40px ${gridTemplate}` }}
+    >
+      <div
+        className={cn(
+          "sticky left-0 flex min-h-[36px] items-center px-3",
+          variant === "operator"
+            ? cn(
+                "border-r-0 bg-background",
+                showPinnedScrollShadow
+                  ? "z-[33] shadow-[3px_0_10px_-2px_rgba(0,0,0,0.07)] dark:shadow-[3px_0_10px_-2px_rgba(0,0,0,0.2)]"
+                  : "z-[32] shadow-none",
+              )
+            : "z-[32] border-r border-border/60 bg-muted shadow-[2px_0_8px_-2px_rgba(0,0,0,0.08)]",
+        )}
+      >
+        <Checkbox
+          checked={selected.size > 0 && selected.size === sortedFiltered.length}
+          onCheckedChange={(v) => {
+            if (v) setSelected(new Set(sortedFiltered.map((g) => g.id)))
+            else setSelected(new Set())
+          }}
+        />
+      </div>
+      {cols.map((c) => (
+        <SortableColumnHeader
+          key={c.key}
+          col={c}
+          sortKey={sortKey}
+          sortDir={sortDir}
+          onSort={handleSortColumn}
+          onReorder={handleReorderColumns}
+          draggingCol={draggingCol}
+          onDraggingChange={setDraggingCol}
+          variant={variant}
+          showPinnedScrollShadow={variant === "operator" && showPinnedScrollShadow}
+        />
+      ))}
+    </div>
+  )
 
-      {/* Scrollport: fade (operator+chat) is a sibling so it stays viewport-anchored; table scrolls inside. */}
-      <div className="relative min-h-0 min-w-0 flex-1">
-        <div
-          ref={tableScrollRef}
-          onScroll={updateTableScrollShadows}
-          className="h-full min-h-0 w-full overflow-auto overscroll-contain"
-        >
-          <div className="flex w-max flex-col">
-          {/* Header — row height drives sticky offset below (+1px border-b) */}
+  return (
+    <div className={cn("flex min-h-0 min-w-0 flex-col", !pageScrollMode && "flex-1")}>
+      <div
+        className={cn(
+          "flex min-h-0 min-w-0 flex-col",
+          !pageScrollMode && "flex-1",
+          variant === "operator" &&
+            cn(
+              "rounded-[12px] bg-background",
+              !pageScrollMode && "overflow-hidden",
+              !flatChrome && "shadow-sm",
+            ),
+        )}
+      >
+      {!pageScrollMode && (
+        <>
           <div
             className={cn(
-              "sticky top-0 z-40 grid w-max items-stretch border-b border-border",
-              showStickyHeaderShadow && "shadow-sm",
-              variant === "operator" && "border-t-0",
-              "bg-muted",
+              "flex flex-nowrap items-center gap-x-2 overflow-x-auto overflow-y-hidden py-2 scrollbar-thin",
+              "mb-1",
+              variant === "operator" ? "border-b-0 bg-background px-3" : "border-b border-border bg-background px-6",
             )}
-            style={{ gridTemplateColumns: `40px ${gridTemplate}` }}
           >
-            <div
-              className={cn(
-                "sticky left-0 flex min-h-[36px] items-center px-3",
-                variant === "operator"
-                  ? cn(
-                      "border-r-0 bg-muted",
-                      showPinnedScrollShadow
-                        ? "z-[33] shadow-[3px_0_10px_-2px_rgba(0,0,0,0.07)] dark:shadow-[3px_0_10px_-2px_rgba(0,0,0,0.2)]"
-                        : "z-[32] shadow-none",
-                    )
-                  : "z-[32] border-r border-border/60 bg-muted shadow-[2px_0_8px_-2px_rgba(0,0,0,0.08)]",
-              )}
-            >
-              <Checkbox
-                checked={selected.size > 0 && selected.size === sortedFiltered.length}
-                onCheckedChange={(v) => {
-                  if (v) setSelected(new Set(sortedFiltered.map((g) => g.id)))
-                  else setSelected(new Set())
-                }}
-              />
-            </div>
-            {cols.map((c) => (
-              <SortableColumnHeader
-                key={c.key}
-                col={c}
-                sortKey={sortKey}
-                sortDir={sortDir}
-                onSort={handleSortColumn}
-                onReorder={handleReorderColumns}
-                draggingCol={draggingCol}
-                onDraggingChange={setDraggingCol}
-                variant={variant}
-                showPinnedScrollShadow={variant === "operator" && showPinnedScrollShadow}
-              />
-            ))}
+            {filterToolbarInner}
           </div>
+          {bulkBar}
+        </>
+      )}
+
+      {/* Scrollport: vertical = page container when pageScrollMode; else internal overflow-auto */}
+      <div className={cn("relative min-w-0", pageScrollMode ? "min-h-0 w-full" : "min-h-0 flex-1")}>
+        <div
+          ref={tableScrollRef}
+          className={cn(
+            pageScrollMode
+              ? "w-full min-h-0 overflow-x-auto overflow-y-visible overscroll-x-contain"
+              : "h-full min-h-0 min-w-0 w-full overflow-auto overscroll-contain",
+          )}
+        >
+          <div className={cn(pageScrollMode ? "flex w-max min-w-full flex-col" : "flex w-max flex-col")}>
+            {pageScrollMode ? (
+              <div
+                ref={stickyStackRef}
+                className="sticky top-0 z-50 flex w-max min-w-full flex-col bg-background ring-1 ring-border/10"
+              >
+                {stickyFilterPrefix ? (
+                  <div className="border-b border-border/50 bg-background px-3 py-2.5">{stickyFilterPrefix}</div>
+                ) : null}
+                <div
+                  className={cn(
+                    "flex w-full min-w-full flex-nowrap items-center gap-x-2 overflow-x-auto overflow-y-hidden py-2 scrollbar-thin",
+                    "border-b border-border/50",
+                    variant === "operator" ? "bg-background px-3" : "bg-background px-6",
+                  )}
+                >
+                  {filterToolbarInner}
+                </div>
+                {bulkBar}
+                {columnHeaderRow(true)}
+              </div>
+            ) : (
+              columnHeaderRow(false)
+            )}
 
           {/* Body */}
           {grouped.map((group) => {
@@ -693,7 +806,11 @@ export function AllGrants({
                   <button
                     type="button"
                     onClick={() => toggleGroup(group.key)}
-                    className="group/stickyrow sticky top-[37px] z-30 flex w-max min-w-full flex-nowrap items-center gap-2 border-b border-border bg-zinc-50 px-0 py-0 text-left hover:bg-zinc-100 dark:bg-zinc-900/30 dark:hover:bg-zinc-900/45"
+                    className={cn(
+                      "group/stickyrow sticky z-30 flex w-max min-w-full flex-nowrap items-center gap-2 border-b border-border bg-zinc-50 px-0 py-0 text-left hover:bg-zinc-100 dark:bg-zinc-900/30 dark:hover:bg-zinc-900/45",
+                      !pageScrollMode && "top-[37px]",
+                    )}
+                    style={pageScrollMode ? { top: groupStickyTopPx } : undefined}
                   >
                     <span className="sticky left-[40px] z-[25] ml-[40px] flex shrink-0 items-center gap-2 bg-zinc-50 px-3 py-1.5 group-hover/stickyrow:bg-zinc-100 dark:bg-zinc-900/30 dark:group-hover/stickyrow:bg-zinc-900/45">
                       {collapsed ? (
@@ -750,9 +867,9 @@ export function AllGrants({
           )}
         </div>
         </div>
-        {variant === "operator" && operatorChatOpen && (
+        {variant === "operator" && !pageScrollMode && (
           <div
-            className="pointer-events-none absolute inset-y-0 right-0 z-[25] w-16 bg-gradient-to-l from-background from-55% to-transparent"
+            className="pointer-events-none absolute inset-y-0 right-0 z-[25] w-28 bg-gradient-to-l from-background from-30% via-background/60 to-transparent"
             aria-hidden
           />
         )}
@@ -830,7 +947,7 @@ function GrantRow({
 }) {
   const op = variant === "operator"
   const baseCell =
-    !isSelected && !grant.blocked
+    !isSelected
       ? "bg-card dark:bg-card group-hover:bg-muted dark:group-hover:bg-muted"
       : ""
   const grantColShell = cn(
@@ -839,8 +956,7 @@ function GrantRow({
       ? "z-[33] shadow-[3px_0_10px_-2px_rgba(0,0,0,0.07)] dark:shadow-[3px_0_10px_-2px_rgba(0,0,0,0.2)]"
       : "z-[28]",
     isSelected && "bg-violet-100 dark:bg-violet-950",
-    !isSelected && grant.blocked && "bg-amber-50 dark:bg-amber-950",
-    !isSelected && !grant.blocked && baseCell,
+    !isSelected && baseCell,
   )
 
   return (
@@ -849,8 +965,7 @@ function GrantRow({
       className={[
         "group grid w-max cursor-pointer items-stretch border-b border-border/60 transition-colors hover:bg-muted",
         isSelected && "bg-violet-100 dark:bg-violet-950",
-        !isSelected && grant.blocked && "bg-amber-50 dark:bg-amber-950",
-        !isSelected && !grant.blocked && "bg-card dark:bg-card group-hover:bg-muted dark:group-hover:bg-muted",
+        !isSelected && "bg-card dark:bg-card group-hover:bg-muted dark:group-hover:bg-muted",
       ]
         .filter(Boolean)
         .join(" ")}
@@ -863,8 +978,7 @@ function GrantRow({
           op && !showPinnedScrollShadow && "shadow-none",
           op ? "border-r-0" : "border-r border-border/60",
           isSelected && "bg-violet-100 dark:bg-violet-950",
-          !isSelected && grant.blocked && "bg-amber-50 dark:bg-amber-950",
-          !isSelected && !grant.blocked && baseCell,
+          !isSelected && baseCell,
         )}
         onClick={(e) => e.stopPropagation()}
       >
@@ -1169,7 +1283,7 @@ function SortableColumnHeader({
           "relative sticky left-[40px] flex min-h-[36px] min-w-[320px] max-w-[320px] flex-col justify-center border-r border-border/60",
           op
             ? cn(
-                "bg-muted",
+                "bg-background",
                 showPinnedScrollShadow
                   ? "z-[33] shadow-[3px_0_10px_-2px_rgba(0,0,0,0.07)] dark:shadow-[3px_0_10px_-2px_rgba(0,0,0,0.2)]"
                   : "z-[28] shadow-none",

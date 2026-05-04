@@ -10,6 +10,7 @@ import { AllGrants } from "@/components/manage/all-grants"
 import { GrantPage } from "@/components/manage/grant-page"
 import { AgentRail } from "@/components/manage/agent-rail"
 import { ChatPanelStandalone } from "@/components/manage/chat-panel.standalone"
+import { MixedPrototype } from "@/components/manage/mixed-prototype"
 import { OPERATOR_INITIAL_MESSAGES, OPERATOR_SUGGESTIONS } from "@/components/manage/operator-initial"
 import { grants } from "@/lib/manage/data"
 import { ManagePrototypeSidebar } from "@/components/sidebar/manage-prototype-sidebar"
@@ -32,7 +33,7 @@ function StaticCommandCenter() {
   const contextLabel = grant
     ? grant.title
     : grain === "command"
-      ? "Portfolio overview"
+      ? "My work"
       : "All grants table"
 
   return (
@@ -46,7 +47,7 @@ function StaticCommandCenter() {
         onClearGrant={() => setActiveGrantId(null)}
       />
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden">
-        <TopBar />
+        <TopBar showNewGrant={!grant && grain === "all-grants"} />
         <GrainBar
           active={grain}
           onChange={(g) => {
@@ -74,7 +75,10 @@ function StaticCommandCenter() {
             </div>
           ) : (
             <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-              <AllGrants onOpenGrant={openGrant} />
+              <AllGrants
+                onOpenGrant={openGrant}
+                showToolbarNewGrant={grant !== null || grain !== "all-grants"}
+              />
             </div>
           )}
         </main>
@@ -113,7 +117,7 @@ function OperatorAllGrants() {
         onClearGrant={closeGrant}
       />
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden">
-        <TopBar />
+        <TopBar showNewGrant={!grant} />
         {grant ? (
           <GrainBar
             breadcrumb={{
@@ -129,16 +133,16 @@ function OperatorAllGrants() {
               <GrantPage grantId={grant.id} />
             </div>
           ) : (
-            <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col gap-3 p-3 md:flex-row md:gap-4 md:p-4">
+            <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col gap-6 p-6 md:flex-row">
               <div className="order-1 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
                 <AllGrants
                   onOpenGrant={openGrant}
                   variant="operator"
-                  operatorChatOpen={operatorChatOpen}
+                  showToolbarNewGrant={false}
                 />
               </div>
               {operatorChatOpen ? (
-                <div className="operator-chat-enter order-2 flex h-[min(42vh,26rem)] max-h-[480px] min-h-[220px] w-full shrink-0 flex-col overflow-hidden rounded-xl border border-border bg-background md:h-full md:max-h-none md:min-h-0 md:w-[min(26rem,34vw)] md:max-w-[26rem] md:shrink-0">
+                <div className="operator-chat-enter order-2 flex h-[min(42vh,26rem)] max-h-[480px] min-h-[220px] w-full shrink-0 flex-col overflow-hidden rounded-xl border border-twilight-200 bg-background shadow-[0_14px_44px_-10px_rgba(61,58,138,0.22)] md:h-full md:max-h-none md:min-h-0 md:w-[min(26rem,34vw)] md:max-w-[26rem] md:shrink-0 dark:border-twilight-350/35 dark:shadow-[0_18px_56px_-12px_rgba(61,58,138,0.42)]">
                   <ChatPanelStandalone
                     variant="operator"
                     layout="embedded"
@@ -166,7 +170,7 @@ function OperatorAllGrants() {
             }}
             aria-label="Open operator chat"
           >
-            <Sparkles className="h-5 w-5" />
+            <Sparkles className="h-5 w-5 text-primary-foreground" strokeWidth={1.75} aria-hidden />
             <span className="absolute -top-1 -right-1 h-3 w-3 rounded-full bg-chart-3 ring-2 ring-background" />
           </button>
         ) : null}
@@ -177,8 +181,12 @@ function OperatorAllGrants() {
 
 function PageContent() {
   const searchParams = useSearchParams()
-  if (searchParams.get("prototype") === "operator") {
+  const prototype = searchParams.get("prototype")
+  if (prototype === "operator") {
     return <OperatorAllGrants />
+  }
+  if (prototype === "mixed") {
+    return <MixedPrototype />
   }
   return <StaticCommandCenter />
 }
@@ -188,7 +196,7 @@ export default function Page() {
     <Suspense
       fallback={
         <div className="flex min-h-screen w-full flex-col bg-background">
-          <div className="h-14 bg-sidebar/95" />
+          <div className="h-14 border-b border-border bg-background" />
           <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">Loading…</div>
         </div>
       }
