@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useState } from "react"
 import type { TabType } from "@/components/dashboard"
 import type { Grain } from "@/components/manage/grain-bar"
 import { Sidebar } from "./index"
@@ -12,6 +12,9 @@ const DEFAULT_COUNTS: SidebarProps["counts"] = {
   applications: 2,
   awards: 3,
 }
+
+/** Prototype shells always show Tracker as the active nav lane; clicks still navigate. */
+const PROTOTYPE_SIDEBAR_ACTIVE_TAB: TabType = "tracker"
 
 /**
  * Lookback `Sidebar` with local prototype state, wired loosely to Traver grain navigation.
@@ -25,22 +28,12 @@ export function ManagePrototypeSidebar({
   onRequestGrain: (g: Grain) => void
   onClearGrant: () => void
 }) {
-  const [activeTab, setActiveTab] = useState<TabType>("tracker")
   const [selectedProject, setSelectedProject] = useState<string | null>("all")
   const [showPinnedSidebar, setShowPinnedSidebar] = useState(false)
   const [searchModalOpen, setSearchModalOpen] = useState(false)
 
-  useEffect(() => {
-    if (grain === "command") {
-      setActiveTab("hq-dashboard")
-    } else if (grain === "all-grants") {
-      setActiveTab("tracker")
-    }
-  }, [grain])
-
   const onTabChange = useCallback(
     (tab: TabType) => {
-      setActiveTab(tab)
       if (tab === "hq-dashboard" || tab === "calendar" || tab === "reports") {
         onRequestGrain("command")
         onClearGrant()
@@ -66,7 +59,7 @@ export function ManagePrototypeSidebar({
 
   return (
     <Sidebar
-      activeTab={activeTab}
+      activeTab={PROTOTYPE_SIDEBAR_ACTIVE_TAB}
       onTabChange={onTabChange}
       selectedProject={selectedProject}
       onSelectProject={setSelectedProject}
