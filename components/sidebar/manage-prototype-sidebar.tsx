@@ -25,7 +25,7 @@ export function ManagePrototypeSidebar({
   onRequestGrain: (g: Grain) => void
   onClearGrant: () => void
 }) {
-  const [activeTab, setActiveTab] = useState<TabType>("matches")
+  const [activeTab, setActiveTab] = useState<TabType>("tracker")
   const [selectedProject, setSelectedProject] = useState<string | null>("all")
   const [showPinnedSidebar, setShowPinnedSidebar] = useState(false)
   const [searchModalOpen, setSearchModalOpen] = useState(false)
@@ -33,6 +33,8 @@ export function ManagePrototypeSidebar({
   useEffect(() => {
     if (grain === "command") {
       setActiveTab("hq-dashboard")
+    } else if (grain === "all-grants") {
+      setActiveTab("tracker")
     }
   }, [grain])
 

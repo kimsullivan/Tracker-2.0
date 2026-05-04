@@ -15,7 +15,7 @@ import { grants } from "@/lib/manage/data"
 import { ManagePrototypeSidebar } from "@/components/sidebar/manage-prototype-sidebar"
 
 function StaticCommandCenter() {
-  const [grain, setGrain] = useState<Grain>("command")
+  const [grain, setGrain] = useState<Grain>("all-grants")
   const [activeGrantId, setActiveGrantId] = useState<string | null>(null)
 
   const grant = activeGrantId ? grants.find((g) => g.id === activeGrantId) : null
