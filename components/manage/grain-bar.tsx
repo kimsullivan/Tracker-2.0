@@ -58,7 +58,7 @@ export function GrainBar({
 }) {
   if (breadcrumb) {
     return (
-      <div className="flex h-9 items-center gap-2 border-b border-border bg-background px-4 text-xs">
+      <div className="flex h-9 items-center gap-2 border-b border-border bg-white px-4 text-xs">
         <button
           onClick={breadcrumb.onBack}
           className="text-muted-foreground hover:text-foreground transition-colors"
@@ -72,7 +72,7 @@ export function GrainBar({
   }
 
   return (
-    <div className="flex h-9 items-center gap-1 border-b border-border bg-background px-3">
+    <div className="flex h-9 items-center gap-1 border-b border-border bg-white px-3">
       {active != null && onChange ? <GrainNavToggle active={active} onChange={onChange} size="bar" /> : null}
     </div>
   )

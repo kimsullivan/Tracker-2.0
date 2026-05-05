@@ -35,7 +35,7 @@ export function SidebarShell({ sidebarState, children }: SidebarShellProps) {
         
         <div 
           className={cn(
-            "app-sidebar border-r border-border bg-background flex flex-col h-full overflow-x-visible transition-all duration-300",
+            "app-sidebar border-r border-border bg-white flex flex-col h-full overflow-x-visible transition-all duration-300",
             collapsed ? "w-14" : "w-64"
           )}
           onMouseEnter={handleMouseEnterPinnedSection}

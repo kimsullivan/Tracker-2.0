@@ -28,7 +28,7 @@ export function PinnedSidebar({ sidebarState }: PinnedSidebarProps) {
   return (
     <div 
       className={cn(
-        "app-sidebar absolute top-0 z-20 h-full w-64 border-r-2 border-border bg-background",
+        "app-sidebar absolute top-0 z-20 h-full w-64 border-r-2 border-border bg-white",
         "transition-all duration-300 ease-out",
         collapsed ? "left-20" : "left-64",
         showPinnedSidebar ? "opacity-100" : "opacity-0 pointer-events-none"

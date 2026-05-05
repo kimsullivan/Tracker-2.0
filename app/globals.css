@@ -5,8 +5,9 @@
 
 :root {
   --radius: 0.75rem;
-  /* Tighter elevation: smaller blur/spread for inputs, selects, outline buttons (shadow-xs/sm) */
-  --shadow: 0px 2px 6px -1px rgb(15 62 24 / 0.09);
+  /* Elevation shadows (borrowed reference design-system scale) */
+  --shadow: 0px 4px 24px -1px rgb(2 1 6 / 0.1);
+  --elevated-stroke: #e4e7e5;
   --text-lg: 1.25rem;
   --text-sm: 1rem;
   --text-xl: 1.5rem;
@@ -17,14 +18,14 @@
   --text-5xl: 4rem;
   --font-body: var(--font-lato);
   --font-heading: var(--font-lato);
-  --shadow-lg: 0px 6px 16px -3px rgb(15 62 24 / 0.12);
-  --shadow-md: 0px 4px 10px -2px rgb(15 62 24 / 0.1);
-  --shadow-sm: 0px 1px 3px 0px rgb(15 62 24 / 0.07);
-  --shadow-xl: 0px 10px 24px -4px rgb(15 62 24 / 0.13);
-  --shadow-xs: 0px 1px 2px 0px rgb(15 62 24 / 0.05);
+  --shadow-lg: 0px 4px 24px -1px rgb(2 1 6 / 0.1);
+  --shadow-md: 0px 4px 24px -1px rgb(2 1 6 / 0.1);
+  --shadow-sm: 0px 4px 24px -1px rgb(2 1 6 / 0.1);
+  --shadow-xl: 0px 4px 24px -1px rgb(2 1 6 / 0.1);
+  --shadow-xs: 0px 4px 24px -1px rgb(2 1 6 / 0.1);
   --text-base: 1rem;
-  --shadow-2xl: 0px 16px 40px -6px rgb(15 62 24 / 0.16);
-  --shadow-2xs: 0px 1px 1px 0px rgb(15 62 24 / 0.035);
+  --shadow-2xl: 0px 4px 24px -1px rgb(2 1 6 / 0.1);
+  --shadow-2xs: 0px 4px 24px -1px rgb(2 1 6 / 0.1);
 
   --card: #ffffff;
   --ring: #5a56b3;
@@ -107,6 +108,16 @@
   --destructive-foreground: #fffefc;
   --sidebar-accent-foreground: #fffefc;
   --sidebar-primary-foreground: #0f3e17;
+
+  --shadow: 0px 4px 24px -1px rgb(2 1 6 / 0.1);
+  --elevated-stroke: rgb(255 254 252 / 0.12);
+  --shadow-lg: 0px 4px 24px -1px rgb(2 1 6 / 0.1);
+  --shadow-md: 0px 4px 24px -1px rgb(2 1 6 / 0.1);
+  --shadow-sm: 0px 4px 24px -1px rgb(2 1 6 / 0.1);
+  --shadow-xl: 0px 4px 24px -1px rgb(2 1 6 / 0.1);
+  --shadow-xs: 0px 4px 24px -1px rgb(2 1 6 / 0.1);
+  --shadow-2xl: 0px 4px 24px -1px rgb(2 1 6 / 0.1);
+  --shadow-2xs: 0px 4px 24px -1px rgb(2 1 6 / 0.1);
 }
 
 @theme inline {
@@ -142,6 +153,7 @@
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
+  --color-elevated-stroke: var(--elevated-stroke);
   --font-sans: var(--font-lato);
   --font-body: var(--font-lato);
   --font-heading: var(--font-lato);
@@ -195,7 +207,7 @@
   --color-azure-50: #eff6ff;
   --color-azure-300: #93c5fd;
   --color-azure-400: #3b82f6;
-  --shadow-elevation-medium: 0px 4px 16px 0px rgba(0, 0, 0, 0.1);
+  --shadow-elevation-medium: 0px 4px 24px -1px rgb(2 1 6 / 0.1);
 }
 
 @layer base {
@@ -203,7 +215,7 @@
     @apply border-border outline-ring/50;
   }
   body {
-    @apply bg-background text-foreground text-base;
+    @apply bg-white text-foreground text-base;
     margin: 0;
     padding: 0;
     display: flex;

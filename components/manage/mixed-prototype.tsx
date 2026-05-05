@@ -48,7 +48,7 @@ export function MixedPrototype() {
       : "All grants table"
 
   return (
-    <div className="flex min-h-screen w-full min-w-0 max-w-[100vw] overflow-x-hidden bg-background">
+    <div className="flex min-h-screen w-full min-w-0 max-w-[100vw] overflow-x-hidden bg-white">
       <ManagePrototypeSidebar
         grain={grain}
         onRequestGrain={(g) => {
@@ -76,13 +76,15 @@ export function MixedPrototype() {
           ) : (
             <>
               {/* Primary: greeting (My work) + KPIs + toggle + queue OR grants table only */}
-              <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+              <section className="flex min-h-0 min-w-0 flex-1 flex-col">
                 <div
                   className={cn(
                     MIXED_PRIMARY,
-                    "flex min-h-0 min-w-0 flex-1 flex-col pt-8 pb-6",
+                    "flex min-h-0 min-w-0 flex-1 flex-col",
+                    grain === "command" ? "pt-8 pb-6" : "pb-3 pt-2 md:pb-4 md:pt-3",
                   )}
                 >
+                  {/* Greeting collapses smoothly when switching to All grants (grid-rows 1fr → 0fr). */}
                   <div
                     className={cn(
                       "grid shrink-0 transition-[grid-template-rows] duration-300 ease-out motion-reduce:transition-none",
@@ -90,7 +92,7 @@ export function MixedPrototype() {
                     )}
                   >
                     <div className="min-h-0 overflow-hidden">
-                      <div className="space-y-6 pb-6">
+                      <div className="pb-6">
                         <Greeting />
                       </div>
                     </div>
@@ -111,9 +113,9 @@ export function MixedPrototype() {
                   ) : (
                     <div
                       ref={allGrantsScrollRef}
-                      className="mt-6 flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain"
+                      className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain"
                     >
-                      <div className="shrink-0 space-y-6 pb-4">
+                      <div className="shrink-0 px-2 pb-3 pt-5 sm:px-4 sm:pb-4 sm:pt-6">
                         <PulseStrip />
                       </div>
                       <AllGrants
@@ -122,7 +124,6 @@ export function MixedPrototype() {
                         flatChrome
                         showToolbarNewGrant={false}
                         pageScrollMode
-                        pageScrollContainerRef={allGrantsScrollRef}
                         stickyFilterPrefix={<GrainNavToggle active={grain} onChange={setGrain} size="panel" />}
                       />
                     </div>
@@ -132,8 +133,8 @@ export function MixedPrototype() {
 
               {/* Operator chat: outside primary shell; beside table, not under KPIs */}
               {grain === "all-grants" && operatorChatOpen ? (
-                <aside className="flex min-h-0 w-full shrink-0 flex-col overflow-hidden px-0 pt-6 pb-6 max-md:bg-background md:max-w-[26rem] md:w-[min(26rem,32vw)] md:shrink-0 md:bg-transparent md:px-4 md:pt-8 md:pb-6 md:pr-6 xl:pr-8">
-                  <div className="operator-chat-enter flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl bg-background shadow-[0_14px_44px_-10px_rgba(61,58,138,0.22)] dark:shadow-[0_18px_56px_-12px_rgba(61,58,138,0.42)]">
+                <aside className="flex min-h-0 w-full shrink-0 flex-col overflow-hidden bg-transparent px-0 pt-6 pb-6 md:max-w-[26rem] md:w-[min(26rem,32vw)] md:shrink-0 md:px-4 md:pt-8 md:pb-6 md:pr-6 xl:pr-8">
+                  <div className="operator-chat-enter flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-elevated-stroke bg-transparent shadow-sm dark:bg-card dark:shadow-sm">
                     <ChatPanelStandalone
                       variant="manage"
                       layout="embedded"

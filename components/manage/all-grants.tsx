@@ -1,7 +1,7 @@
 "use client"
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
-import type { ReactNode, RefObject } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import type { ReactNode } from "react"
 import { grants as grantsData, stageOrder, team } from "@/lib/manage/data"
 import type { Grant, Stage } from "@/lib/manage/types"
 import { cn } from "@/lib/utils"
@@ -255,7 +255,6 @@ export function AllGrants({
   showToolbarNewGrant = true,
   flatChrome = false,
   pageScrollMode = false,
-  pageScrollContainerRef,
   stickyFilterPrefix,
 }: {
   onOpenGrant: (id: string) => void
@@ -265,11 +264,10 @@ export function AllGrants({
   /** Operator layout: omit the outer card shadow (e.g. mixed prototype). */
   flatChrome?: boolean
   /**
-   * Vertical scroll lives on an ancestor (e.g. KPIs scroll away; toolbar + table header stay sticky).
-   * Provide `pageScrollContainerRef` to that scrollable element for shadow / scroll sync.
+   * Use page layout scroll for the grants block (Mixed): KPI/toggle/table share one outer column;
+   * filter row stays outside horizontal table scrolling.
    */
   pageScrollMode?: boolean
-  pageScrollContainerRef?: RefObject<HTMLDivElement | null>
   /** Stuck with filter toolbar + table header (e.g. My work / All grants toggle in mixed prototype). */
   stickyFilterPrefix?: ReactNode
 }) {
@@ -299,61 +297,23 @@ export function AllGrants({
   const [colOrder, setColOrder] = useState<ColKey[]>(() => [...NON_GRANT_COLUMN_KEYS])
   const [draggingCol, setDraggingCol] = useState<ColKey | null>(null)
   const tableScrollRef = useRef<HTMLDivElement>(null)
-  const stickyStackRef = useRef<HTMLDivElement>(null)
-  const [stickyStackH, setStickyStackH] = useState(120)
   const [showPinnedScrollShadow, setShowPinnedScrollShadow] = useState(false)
-  const [showStickyHeaderShadow, setShowStickyHeaderShadow] = useState(false)
 
   const updateTableScrollShadows = useCallback(() => {
     const horiz = tableScrollRef.current
-    if (horiz) {
-      const { scrollLeft, scrollWidth, clientWidth } = horiz
-      const maxScroll = Math.max(0, scrollWidth - clientWidth)
-      setShowPinnedScrollShadow(maxScroll > 1 && scrollLeft > 1)
-    }
-
-    if (pageScrollMode && pageScrollContainerRef?.current) {
-      setShowStickyHeaderShadow(pageScrollContainerRef.current.scrollTop > 2)
-    } else if (horiz) {
-      setShowStickyHeaderShadow(horiz.scrollTop > 2)
-    }
-  }, [pageScrollMode, pageScrollContainerRef])
-
-  useLayoutEffect(() => {
-    if (!pageScrollMode) return
-    const el = stickyStackRef.current
-    if (!el) return
-    const measure = () => setStickyStackH(el.offsetHeight)
-    measure()
-    const ro = new ResizeObserver(measure)
-    ro.observe(el)
-    return () => ro.disconnect()
-  }, [pageScrollMode, stickyFilterPrefix, selected.size, groupBy, visibleCols, colOrder, variant])
+    if (!horiz) return
+    const { scrollLeft, scrollWidth, clientWidth } = horiz
+    const maxScroll = Math.max(0, scrollWidth - clientWidth)
+    setShowPinnedScrollShadow(maxScroll > 1 && scrollLeft > 1)
+  }, [])
 
   useEffect(() => {
     const onScroll = () => updateTableScrollShadows()
     const horiz = tableScrollRef.current
-    const outer = pageScrollContainerRef?.current
-
-    if (pageScrollMode) {
-      if (outer) {
-        outer.addEventListener("scroll", onScroll, { passive: true })
-        horiz?.addEventListener("scroll", onScroll, { passive: true })
-        onScroll()
-        return () => {
-          outer.removeEventListener("scroll", onScroll)
-          horiz?.removeEventListener("scroll", onScroll)
-        }
-      }
-      return
-    }
-
-    if (horiz) {
-      horiz.addEventListener("scroll", onScroll, { passive: true })
-      onScroll()
-      return () => horiz.removeEventListener("scroll", onScroll)
-    }
-  }, [pageScrollMode, pageScrollContainerRef, updateTableScrollShadows])
+    horiz?.addEventListener("scroll", onScroll, { passive: true })
+    onScroll()
+    return () => horiz?.removeEventListener("scroll", onScroll)
+  }, [pageScrollMode, updateTableScrollShadows])
 
   const builtinSlice = useMemo(() => {
     if (variant === "operator" && selectedViewId.startsWith("custom-")) {
@@ -553,8 +513,6 @@ export function AllGrants({
     toast("View saved", { description: `“${name}” is in the View menu.` })
   }
 
-  const groupStickyTopPx = pageScrollMode ? stickyStackH : 37
-
   const filterToolbarInner = (
     <>
       <div className="flex min-w-0 flex-nowrap items-center gap-x-2">
@@ -682,14 +640,12 @@ export function AllGrants({
       </div>
     ) : null
 
-  const columnHeaderRow = (inPageStickyStack: boolean) => (
+  const columnHeaderRow = () => (
     <div
       className={cn(
         "z-40 grid w-max items-stretch border-b border-border",
-        !inPageStickyStack && "sticky top-0",
-        showStickyHeaderShadow && "shadow-sm",
         variant === "operator" && "border-t-0",
-        variant === "operator" ? "bg-background" : "bg-muted",
+        variant === "operator" ? "bg-transparent dark:bg-card/40" : "bg-muted",
       )}
       style={{ gridTemplateColumns: `40px ${gridTemplate}` }}
     >
@@ -698,7 +654,7 @@ export function AllGrants({
           "sticky left-0 flex min-h-[36px] items-center px-3",
           variant === "operator"
             ? cn(
-                "border-r-0 bg-background",
+                "border-r-0 bg-transparent dark:bg-card/40",
                 showPinnedScrollShadow
                   ? "z-[33] shadow-[3px_0_10px_-2px_rgba(0,0,0,0.07)] dark:shadow-[3px_0_10px_-2px_rgba(0,0,0,0.2)]"
                   : "z-[32] shadow-none",
@@ -731,17 +687,87 @@ export function AllGrants({
     </div>
   )
 
+  const grantsTableBodyContent = (
+    <>
+      {grouped.map((group) => {
+        const collapsed = collapsedGroups.has(group.key)
+        const sumAward = group.items.reduce((s, g) => s + g.award, 0)
+        const sumWeighted = group.items.reduce((s, g) => s + (g.weighted ?? 0), 0)
+        return (
+          <div key={group.key}>
+            {groupBy !== "none" && (
+              <button
+                type="button"
+                onClick={() => toggleGroup(group.key)}
+                className="group/grprow z-30 flex w-max min-w-full flex-nowrap items-center gap-2 border-b border-border bg-zinc-50 px-0 py-0 text-left hover:bg-zinc-100 dark:bg-zinc-900/30 dark:hover:bg-zinc-900/45"
+              >
+                <span className="sticky left-[40px] z-[25] ml-[40px] flex shrink-0 items-center gap-2 bg-zinc-50 px-3 py-1.5 group-hover/grprow:bg-zinc-100 dark:bg-zinc-900/30 dark:group-hover/grprow:bg-zinc-900/45">
+                  {collapsed ? (
+                    <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  ) : (
+                    <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  )}
+                  {groupBy === "stage" && <StagePill stage={group.key as Stage} />}
+                  {groupBy === "deadline" && (
+                    <span className="text-xs font-semibold text-foreground">
+                      {formatDeadlineMonthGroupLabel(group.key)}
+                    </span>
+                  )}
+                  {groupBy !== "stage" && groupBy !== "deadline" && (
+                    <span className="text-xs font-semibold text-foreground">{group.key}</span>
+                  )}
+                  <span className="text-[11px] text-muted-foreground">
+                    {group.items.length} {group.items.length === 1 ? "grant" : "grants"}
+                  </span>
+                </span>
+                <span className="ml-auto flex shrink-0 items-center gap-3 px-3 py-1.5 text-[11px] tabular-nums text-muted-foreground">
+                  <span>${(sumAward / 1000).toFixed(0)}K unweighted</span>
+                  {sumWeighted > 0 && <span>${(sumWeighted / 1000).toFixed(0)}K weighted</span>}
+                </span>
+              </button>
+            )}
+            {!collapsed &&
+              group.items.map((grant) => (
+                <GrantRow
+                  key={grant.id}
+                  grant={grant}
+                  cols={cols}
+                  gridTemplate={gridTemplate}
+                  isSelected={selected.has(grant.id)}
+                  onToggleSelect={() => toggleSelect(grant.id)}
+                  onOpen={() => onOpenGrant(grant.id)}
+                  onUpdate={updateGrant}
+                  variant={variant}
+                  showPinnedScrollShadow={variant === "operator" && showPinnedScrollShadow}
+                />
+              ))}
+          </div>
+        )
+      })}
+
+      {filtered.length === 0 && (
+        <div className="flex min-w-full flex-col items-center justify-center gap-2 py-16 text-center">
+          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-muted">
+            <Inbox className="h-4 w-4 text-muted-foreground" />
+          </div>
+          <p className="text-sm font-medium text-foreground">No grants match your filters</p>
+          <p className="text-xs text-muted-foreground">Try clearing filters or changing the view.</p>
+        </div>
+      )}
+    </>
+  )
+
   return (
-    <div className={cn("flex min-h-0 min-w-0 flex-col", !pageScrollMode && "flex-1")}>
+    <div className={cn("flex min-h-0 min-w-0 flex-col flex-1")}>
       <div
         className={cn(
           "flex min-h-0 min-w-0 flex-col",
-          !pageScrollMode && "flex-1",
+          pageScrollMode ? "flex-1 min-h-0" : "flex-1",
           variant === "operator" &&
             cn(
-              "rounded-[12px] bg-background",
+              "rounded-[12px] bg-transparent dark:bg-card/40",
               !pageScrollMode && "overflow-hidden",
-              !flatChrome && "shadow-sm",
+              !flatChrome && "border border-elevated-stroke shadow-sm",
             ),
         )}
       >
@@ -751,7 +777,9 @@ export function AllGrants({
             className={cn(
               "flex flex-nowrap items-center gap-x-2 overflow-x-auto overflow-y-hidden py-2 scrollbar-thin",
               "mb-1",
-              variant === "operator" ? "border-b-0 bg-background px-3" : "border-b border-border bg-background px-6",
+              variant === "operator"
+                ? "border-b-0 bg-transparent px-3 dark:bg-card/40"
+                : "border-b border-border bg-background px-6",
             )}
           >
             {filterToolbarInner}
@@ -760,123 +788,70 @@ export function AllGrants({
         </>
       )}
 
-      {/* Scrollport: vertical = page container when pageScrollMode; else internal overflow-auto */}
-      <div className={cn("relative min-w-0", pageScrollMode ? "min-h-0 w-full" : "min-h-0 flex-1")}>
-        <div
-          ref={tableScrollRef}
-          className={cn(
-            pageScrollMode
-              ? "w-full min-h-0 overflow-x-auto overflow-y-visible overscroll-x-contain"
-              : "h-full min-h-0 min-w-0 w-full overflow-auto overscroll-contain",
-          )}
-        >
-          <div className={cn(pageScrollMode ? "flex w-max min-w-full flex-col" : "flex w-max flex-col")}>
-            {pageScrollMode ? (
-              <div
-                ref={stickyStackRef}
-                className="sticky top-0 z-50 flex w-max min-w-full flex-col bg-background ring-1 ring-border/10"
-              >
-                {stickyFilterPrefix ? (
-                  <div className="border-b border-border/50 bg-background px-3 py-2.5">{stickyFilterPrefix}</div>
-                ) : null}
-                <div
-                  className={cn(
-                    "flex w-full min-w-full flex-nowrap items-center gap-x-2 overflow-x-auto overflow-y-hidden py-2 scrollbar-thin",
-                    "border-b border-border/50",
-                    variant === "operator" ? "bg-background px-3" : "bg-background px-6",
-                  )}
-                >
-                  {filterToolbarInner}
+      {/* Scrollport: page scroll ancestor when pageScrollMode; horizontal scroll only on table */}
+      <div
+        className={cn(
+          "relative min-w-0",
+          pageScrollMode ? "flex min-h-0 w-full min-w-0 flex-1 flex-col" : "min-h-0 flex-1",
+        )}
+      >
+        {pageScrollMode ? (
+          <>
+            <div className="flex w-full min-w-0 flex-col bg-transparent dark:bg-card/40">
+              {stickyFilterPrefix ? (
+                <div className="border-b border-border/50 bg-transparent px-3 py-2.5 dark:bg-card/40">
+                  {stickyFilterPrefix}
                 </div>
-                {bulkBar}
-                {columnHeaderRow(true)}
-              </div>
-            ) : (
-              columnHeaderRow(false)
-            )}
-
-          {/* Body */}
-          {grouped.map((group) => {
-            const collapsed = collapsedGroups.has(group.key)
-            const sumAward = group.items.reduce((s, g) => s + g.award, 0)
-            const sumWeighted = group.items.reduce((s, g) => s + (g.weighted ?? 0), 0)
-            return (
-              <div key={group.key}>
-                {groupBy !== "none" && (
-                  <button
-                    type="button"
-                    onClick={() => toggleGroup(group.key)}
-                    className={cn(
-                      "group/stickyrow sticky z-30 flex w-max min-w-full flex-nowrap items-center gap-2 border-b border-border bg-zinc-50 px-0 py-0 text-left hover:bg-zinc-100 dark:bg-zinc-900/30 dark:hover:bg-zinc-900/45",
-                      !pageScrollMode && "top-[37px]",
-                    )}
-                    style={pageScrollMode ? { top: groupStickyTopPx } : undefined}
-                  >
-                    <span className="sticky left-[40px] z-[25] ml-[40px] flex shrink-0 items-center gap-2 bg-zinc-50 px-3 py-1.5 group-hover/stickyrow:bg-zinc-100 dark:bg-zinc-900/30 dark:group-hover/stickyrow:bg-zinc-900/45">
-                      {collapsed ? (
-                        <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                      ) : (
-                        <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                      )}
-                      {groupBy === "stage" && <StagePill stage={group.key as Stage} />}
-                      {groupBy === "deadline" && (
-                        <span className="text-xs font-semibold text-foreground">
-                          {formatDeadlineMonthGroupLabel(group.key)}
-                        </span>
-                      )}
-                      {groupBy !== "stage" && groupBy !== "deadline" && (
-                        <span className="text-xs font-semibold text-foreground">{group.key}</span>
-                      )}
-                      <span className="text-[11px] text-muted-foreground">
-                        {group.items.length} {group.items.length === 1 ? "grant" : "grants"}
-                      </span>
-                    </span>
-                    <span className="ml-auto flex shrink-0 items-center gap-3 px-3 py-1.5 text-[11px] tabular-nums text-muted-foreground">
-                      <span>${(sumAward / 1000).toFixed(0)}K unweighted</span>
-                      {sumWeighted > 0 && <span>${(sumWeighted / 1000).toFixed(0)}K weighted</span>}
-                    </span>
-                  </button>
+              ) : null}
+              <div
+                className={cn(
+                  "flex w-full min-w-0 flex-nowrap items-center gap-x-2 overflow-x-auto overflow-y-hidden py-2 scrollbar-thin",
+                  "border-b border-border/50",
+                  variant === "operator"
+                    ? "bg-transparent px-3 dark:bg-card/40"
+                    : "bg-background px-6",
                 )}
-                {!collapsed &&
-                  group.items.map((grant) => (
-                    <GrantRow
-                      key={grant.id}
-                      grant={grant}
-                      cols={cols}
-                      gridTemplate={gridTemplate}
-                      isSelected={selected.has(grant.id)}
-                      onToggleSelect={() => toggleSelect(grant.id)}
-                      onOpen={() => onOpenGrant(grant.id)}
-                      onUpdate={updateGrant}
-                      variant={variant}
-                      showPinnedScrollShadow={variant === "operator" && showPinnedScrollShadow}
-                    />
-                  ))}
+              >
+                {filterToolbarInner}
               </div>
-            )
-          })}
-
-          {filtered.length === 0 && (
-            <div className="flex min-w-full flex-col items-center justify-center gap-2 py-16 text-center">
-              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-muted">
-                <Inbox className="h-4 w-4 text-muted-foreground" />
-              </div>
-              <p className="text-sm font-medium text-foreground">No grants match your filters</p>
-              <p className="text-xs text-muted-foreground">Try clearing filters or changing the view.</p>
+              {bulkBar}
             </div>
-          )}
-        </div>
-        </div>
+            <div
+              ref={tableScrollRef}
+              className="min-h-0 w-full min-w-0 flex-1 overflow-x-auto overscroll-x-contain"
+            >
+              <div className="flex w-max min-w-full flex-col">
+                {columnHeaderRow()}
+                {grantsTableBodyContent}
+              </div>
+            </div>
+          </>
+        ) : (
+          <div
+            ref={tableScrollRef}
+            className="h-full min-h-0 min-w-0 w-full overflow-auto overscroll-contain"
+          >
+            <div className="flex w-max flex-col">
+              {columnHeaderRow()}
+              {grantsTableBodyContent}
+            </div>
+          </div>
+        )}
         {variant === "operator" && !pageScrollMode && (
           <div
-            className="pointer-events-none absolute inset-y-0 right-0 z-[25] w-28 bg-gradient-to-l from-background from-30% via-background/60 to-transparent"
+            className="pointer-events-none absolute inset-y-0 right-0 z-[25] w-28 bg-gradient-to-l from-white from-30% via-white/55 to-transparent dark:from-card dark:via-card/55"
             aria-hidden
           />
         )}
       </div>
 
       {/* Footer — grant count + totals */}
-      <div className="flex items-center justify-between border-t border-border bg-background px-6 py-2 text-[11px] text-muted-foreground">
+      <div
+        className={cn(
+          "flex items-center justify-between border-t border-border px-6 py-2 text-[11px] text-muted-foreground",
+          variant === "operator" ? "bg-transparent dark:bg-card/40" : "bg-background",
+        )}
+      >
         <span className="tabular-nums">
           Showing {filtered.length} of {grants.length} grants
         </span>
@@ -948,7 +923,9 @@ function GrantRow({
   const op = variant === "operator"
   const baseCell =
     !isSelected
-      ? "bg-card dark:bg-card group-hover:bg-muted dark:group-hover:bg-muted"
+      ? op
+        ? "bg-transparent hover:bg-muted/45 dark:bg-transparent dark:hover:bg-muted/35"
+        : "bg-card dark:bg-card group-hover:bg-muted dark:group-hover:bg-muted"
       : ""
   const grantColShell = cn(
     "sticky left-[40px] flex min-h-full w-full min-w-[320px] max-w-[320px] flex-col border-r border-border/60",
@@ -962,13 +939,14 @@ function GrantRow({
   return (
     <div
       onClick={onOpen}
-      className={[
-        "group grid w-max cursor-pointer items-stretch border-b border-border/60 transition-colors hover:bg-muted",
+      className={cn(
+        "group grid w-max cursor-pointer items-stretch border-b border-border/60 transition-colors",
         isSelected && "bg-violet-100 dark:bg-violet-950",
-        !isSelected && "bg-card dark:bg-card group-hover:bg-muted dark:group-hover:bg-muted",
-      ]
-        .filter(Boolean)
-        .join(" ")}
+        !isSelected &&
+          (op
+            ? "bg-transparent hover:bg-muted/45 dark:bg-transparent dark:hover:bg-muted/35"
+            : "bg-card hover:bg-muted dark:bg-card dark:hover:bg-muted"),
+      )}
       style={{ gridTemplateColumns: `40px ${gridTemplate}` }}
     >
       <div
@@ -1283,7 +1261,7 @@ function SortableColumnHeader({
           "relative sticky left-[40px] flex min-h-[36px] min-w-[320px] max-w-[320px] flex-col justify-center border-r border-border/60",
           op
             ? cn(
-                "bg-background",
+                "bg-transparent dark:bg-card/40",
                 showPinnedScrollShadow
                   ? "z-[33] shadow-[3px_0_10px_-2px_rgba(0,0,0,0.07)] dark:shadow-[3px_0_10px_-2px_rgba(0,0,0,0.2)]"
                   : "z-[28] shadow-none",

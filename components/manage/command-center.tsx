@@ -19,7 +19,8 @@ const PIPELINE_RAMP = [
   "var(--viz-ramp-6)",
 ] as const
 
-const CARD_SHELL = "rounded-[12px] border border-border/35 bg-card/90 shadow-sm"
+const CARD_SHELL =
+  "rounded-[12px] border border-elevated-stroke bg-transparent shadow-sm dark:border-border dark:bg-card dark:shadow-sm"
 
 export function CommandCenter({ onOpenGrant }: { onOpenGrant: (id: string) => void }) {
   return (
@@ -263,7 +264,7 @@ function ActionQueue({ onOpenGrant }: { onOpenGrant: (id: string) => void }) {
 
   return (
     <div className={cn(CARD_SHELL, "overflow-hidden")}>
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/35 px-6 py-4">
+      <div className="flex flex-wrap items-center justify-between gap-2 px-6 py-4">
         <div className="flex flex-wrap items-center gap-2">
           <h2 className="font-heading text-base font-bold text-card-foreground">Today's queue</h2>
           <span className="rounded-full bg-muted/80 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
@@ -274,7 +275,7 @@ function ActionQueue({ onOpenGrant }: { onOpenGrant: (id: string) => void }) {
           <button
             type="button"
             onClick={() => setDueSort((d) => (d === "asc" ? "desc" : "asc"))}
-            className="inline-flex items-center gap-1 rounded-md border border-border/30 bg-background/80 px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+            className="inline-flex items-center gap-1 rounded-md bg-muted/80 px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground"
             title="Sort by days to deadline"
           >
             <ArrowUpDown className="h-3.5 w-3.5 opacity-80" />
@@ -288,7 +289,7 @@ function ActionQueue({ onOpenGrant }: { onOpenGrant: (id: string) => void }) {
           </button>
         </div>
       </div>
-      <ul className="divide-y divide-border/30">
+      <ul>
         {sortedVisible.map((item) => (
           <ActionRow
             key={item.id}
@@ -360,11 +361,11 @@ function AnomaliesPanel() {
 
   return (
     <div className={cn(CARD_SHELL, "overflow-hidden")}>
-      <div className="border-b border-border/35 px-6 py-4">
+      <div className="px-6 py-4">
         <h2 className="font-heading text-sm font-bold text-card-foreground">Worth your attention</h2>
         <p className="text-[11px] text-muted-foreground">3 things the system noticed</p>
       </div>
-      <ul className="divide-y divide-border/30">
+      <ul>
         {anomalies.map((a) => {
           const Icon = iconMap[a.level]
           return (
@@ -380,7 +381,7 @@ function AnomaliesPanel() {
               </div>
               <button
                 onClick={() => toast(a.cta, { description: a.title })}
-                className="ml-8 inline-flex items-center gap-1 rounded-md border border-border bg-background px-2 py-1 text-[11px] font-medium text-foreground hover:bg-muted"
+                className="ml-8 inline-flex items-center gap-1 rounded-md bg-muted/90 px-2 py-1 text-[11px] font-medium text-foreground hover:bg-muted"
               >
                 {a.cta}
                 <ArrowUpRight className="h-3 w-3" />
@@ -396,7 +397,7 @@ function AnomaliesPanel() {
 function TeamLoad() {
   return (
     <div className={cn(CARD_SHELL, "overflow-hidden")}>
-      <div className="border-b border-border/35 px-6 py-4">
+      <div className="px-6 py-4">
         <h2 className="font-heading text-sm font-bold text-card-foreground">Team load · this week</h2>
         <p className="text-[11px] text-muted-foreground">Reassigning Cummings LOI to Grace would even out the week.</p>
       </div>

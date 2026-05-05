@@ -37,7 +37,7 @@ function StaticCommandCenter() {
       : "All grants table"
 
   return (
-    <div className="flex min-h-screen w-full min-w-0 max-w-[100vw] overflow-x-hidden bg-background">
+    <div className="flex min-h-screen w-full min-w-0 max-w-[100vw] overflow-x-hidden bg-white">
       <ManagePrototypeSidebar
         grain={grain}
         onRequestGrain={(g) => {
@@ -108,7 +108,7 @@ function OperatorAllGrants() {
   const contextLabel = grant ? grant.title : "All grants table"
 
   return (
-    <div className="flex min-h-screen w-full min-w-0 max-w-[100vw] overflow-x-hidden bg-background">
+    <div className="flex min-h-screen w-full min-w-0 max-w-[100vw] overflow-x-hidden bg-white">
       <ManagePrototypeSidebar
         grain="all-grants"
         onRequestGrain={(g) => {
@@ -117,7 +117,7 @@ function OperatorAllGrants() {
         onClearGrant={closeGrant}
       />
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden">
-        <TopBar showNewGrant={!grant} />
+        <TopBar showNewGrant={!grant} showBottomStroke={false} />
         {grant ? (
           <GrainBar
             breadcrumb={{
@@ -138,11 +138,12 @@ function OperatorAllGrants() {
                 <AllGrants
                   onOpenGrant={openGrant}
                   variant="operator"
+                  flatChrome
                   showToolbarNewGrant={false}
                 />
               </div>
               {operatorChatOpen ? (
-                <div className="operator-chat-enter order-2 flex h-[min(42vh,26rem)] max-h-[480px] min-h-[220px] w-full shrink-0 flex-col overflow-hidden rounded-xl border border-twilight-200 bg-background shadow-[0_14px_44px_-10px_rgba(61,58,138,0.22)] md:h-full md:max-h-none md:min-h-0 md:w-[min(26rem,34vw)] md:max-w-[26rem] md:shrink-0 dark:border-twilight-350/35 dark:shadow-[0_18px_56px_-12px_rgba(61,58,138,0.42)]">
+                <div className="operator-chat-enter order-2 flex h-[min(42vh,26rem)] max-h-[480px] min-h-[220px] w-full shrink-0 flex-col overflow-hidden rounded-xl border border-twilight-200 bg-white shadow-[0_14px_44px_-10px_rgba(61,58,138,0.22)] md:h-full md:max-h-none md:min-h-0 md:w-[min(26rem,34vw)] md:max-w-[26rem] md:shrink-0 dark:border-twilight-350/35 dark:shadow-[0_18px_56px_-12px_rgba(61,58,138,0.42)]">
                   <ChatPanelStandalone
                     variant="operator"
                     layout="embedded"
@@ -195,8 +196,8 @@ export default function Page() {
   return (
     <Suspense
       fallback={
-        <div className="flex min-h-screen w-full flex-col bg-background">
-          <div className="h-14 border-b border-border bg-background" />
+        <div className="flex min-h-screen w-full flex-col bg-white">
+          <div className="h-14 border-b border-border bg-white" />
           <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">Loading…</div>
         </div>
       }

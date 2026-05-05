@@ -10,11 +10,24 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { cn } from "@/lib/utils"
 import { PrototypeSwitcher } from "@/components/manage/prototype-switcher"
 
-export function TopBar({ showNewGrant = false }: { showNewGrant?: boolean }) {
+export function TopBar({
+  showNewGrant = false,
+  showBottomStroke = true,
+}: {
+  showNewGrant?: boolean
+  /** When false, hides the divider under the app header row. */
+  showBottomStroke?: boolean
+}) {
   return (
-    <header className="sticky top-0 z-40 flex h-14 items-center gap-4 border-b border-border bg-background px-4">
+    <header
+      className={cn(
+        "sticky top-0 z-40 flex h-14 items-center gap-4 bg-white px-4",
+        showBottomStroke ? "border-b border-border" : "border-b-0",
+      )}
+    >
       <span className="font-heading shrink-0 font-bold text-foreground">Tracker</span>
 
       <div className="relative hidden min-w-0 flex-1 md:block">
