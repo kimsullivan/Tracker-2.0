@@ -1,14 +1,14 @@
 "use client"
 
-import { useRef, useState } from "react"
+import { useCallback, useLayoutEffect, useMemo, useState } from "react"
 import { Sparkles } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { TopBar } from "@/components/manage/top-bar"
 import { GrainBar, GrainNavToggle, type Grain } from "@/components/manage/grain-bar"
-import { CommandCenterWorkspace, Greeting, PulseStrip } from "@/components/manage/command-center"
+import { CommandCenterWorkspace, Greeting, MyWorkAttentionStrip, PulseStrip, MyWorkQueueToolbar, useMyWorkQueueState } from "@/components/manage/command-center"
 import { AllGrants } from "@/components/manage/all-grants"
+import { PulseStripRechartsStatic } from "@/components/manage/all-grants-kpi-tiles"
 import { GrantPage } from "@/components/manage/grant-page"
-import { AgentRail } from "@/components/manage/agent-rail"
 import { ChatPanelStandalone, getManageAssistantInitialMessages, getManageAssistantSuggestions } from "@/components/manage/chat-panel.standalone"
 import { grants } from "@/lib/manage/data"
 import { ManagePrototypeSidebar } from "@/components/sidebar/manage-prototype-sidebar"
@@ -25,7 +25,10 @@ const MIXED_PRIMARY =
  * operator chat sits outside that shell, beside the primary column.
  */
 export function MixedPrototype() {
-  const allGrantsScrollRef = useRef<HTMLDivElement>(null)
+  const [grantsScrollEl, setGrantsScrollEl] = useState<HTMLDivElement | null>(null)
+  const setGrantsScrollPort = useCallback((node: HTMLDivElement | null) => {
+    setGrantsScrollEl(node)
+  }, [])
   const [grain, setGrain] = useState<Grain>("command")
   const [activeGrantId, setActiveGrantId] = useState<string | null>(null)
   const [operatorChatOpen, setOperatorChatOpen] = useState(false)
@@ -34,21 +37,45 @@ export function MixedPrototype() {
 
   function openGrant(id: string) {
     setActiveGrantId(id)
-    setGrain("all-grants")
   }
 
   function closeGrant() {
     setActiveGrantId(null)
   }
 
-  const contextLabel = grant
-    ? grant.title
-    : grain === "command"
-      ? "My work"
-      : "All grants table"
+  const contextLabel = grant ? grant.title : grain === "command" ? "My work" : "All grants table"
+
+  const workQueue = useMyWorkQueueState()
+
+  const myWorkAttentionSummary = useMemo(() => {
+    const openIssues = workQueue.items.filter((i) => !i.done).length
+    const activeGrantCount = grants.filter((g) => g.stage !== "Closed" && g.stage !== "Declined").length
+    return `${openIssues} issues need your attention · across ${activeGrantCount} active grants`
+  }, [workQueue.items])
+
+  /** `overflow:hidden` / `overflow-x:hidden` on ancestors disables `sticky` vs this column’s `overflow-y-auto`. */
+  const pageScrollStickyPath = !grant && grain === "all-grants"
+  /** My work needs visible overflow so row chip/button shadows aren’t clipped by the shell (see KPI strip). */
+  const relaxShellOverflow = pageScrollStickyPath || grain === "command"
+
+  useLayoutEffect(() => {
+    const root = document.documentElement
+    const bodyEl = document.body
+    root.classList.add("mixed-scroll-sticky-compat")
+    bodyEl.classList.add("mixed-scroll-sticky-compat")
+    return () => {
+      root.classList.remove("mixed-scroll-sticky-compat")
+      bodyEl.classList.remove("mixed-scroll-sticky-compat")
+    }
+  }, [])
 
   return (
-    <div className="flex min-h-screen w-full min-w-0 max-w-[100vw] overflow-x-hidden bg-white">
+    <div
+      className={cn(
+        "shadow-bleed-scroll flex min-h-screen min-h-0 w-full flex-1 flex-row bg-white max-w-[100vw]",
+        relaxShellOverflow ? "overflow-x-visible" : "overflow-x-hidden",
+      )}
+    >
       <ManagePrototypeSidebar
         grain={grain}
         onRequestGrain={(g) => {
@@ -57,7 +84,12 @@ export function MixedPrototype() {
         }}
         onClearGrant={() => setActiveGrantId(null)}
       />
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden">
+      <div
+        className={cn(
+          "shadow-bleed-scroll flex min-h-0 min-w-0 flex-1 flex-col",
+          relaxShellOverflow ? "overflow-x-visible" : "overflow-x-hidden",
+        )}
+      >
         <TopBar showNewGrant={!grant && grain === "all-grants"} />
         {grant ? (
           <GrainBar
@@ -68,9 +100,14 @@ export function MixedPrototype() {
           />
         ) : null}
 
-        <main className="flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden md:flex-row md:items-stretch">
+        <main
+          className={cn(
+            "flex min-h-0 w-full min-w-0 flex-1 flex-col md:flex-row md:items-stretch",
+            relaxShellOverflow ? "overflow-visible" : "overflow-hidden",
+          )}
+        >
           {grant ? (
-            <div className="min-h-0 min-w-0 flex-1 overflow-auto">
+            <div className="shadow-bleed-scroll min-h-0 min-w-0 flex-1 overflow-auto">
               <GrantPage grantId={grant.id} />
             </div>
           ) : (
@@ -93,7 +130,7 @@ export function MixedPrototype() {
                   >
                     <div className="min-h-0 overflow-hidden">
                       <div className="pb-6">
-                        <Greeting />
+                        <Greeting attentionSummary={myWorkAttentionSummary} />
                       </div>
                     </div>
                   </div>
@@ -101,50 +138,63 @@ export function MixedPrototype() {
                   {grain === "command" ? (
                     <>
                       <div className="shrink-0 space-y-6">
-                        <PulseStrip />
-                        <GrainNavToggle active={grain} onChange={setGrain} size="panel" />
+                        <MyWorkAttentionStrip items={workQueue.items} />
                       </div>
-                      <div className="relative mt-6 flex min-h-0 flex-1 flex-col overflow-hidden">
-                        <div className="min-h-0 flex-1 overflow-y-auto pb-2">
-                          <CommandCenterWorkspace onOpenGrant={openGrant} />
+                      <div className="mt-6 flex min-w-0 flex-wrap items-center justify-between gap-3">
+                        <GrainNavToggle active={grain} onChange={setGrain} size="panel" />
+                        <MyWorkQueueToolbar
+                          queueSort={workQueue.queueSort}
+                          setQueueSort={workQueue.setQueueSort}
+                          hideDone={workQueue.hideDone}
+                          setHideDone={workQueue.setHideDone}
+                        />
+                      </div>
+                      <div className="relative mt-2 flex min-h-0 flex-1 flex-col overflow-visible">
+                        <div className="shadow-bleed-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain px-0 pb-10 pt-3 [-webkit-overflow-scrolling:touch]">
+                          <CommandCenterWorkspace onOpenGrant={openGrant} myWorkQueue={workQueue} />
                         </div>
                       </div>
                     </>
                   ) : (
                     <div
-                      ref={allGrantsScrollRef}
-                      className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain"
+                      ref={setGrantsScrollPort}
+                      className="shadow-bleed-scroll flex min-h-0 flex-1 basis-0 flex-col overflow-y-auto overscroll-contain [-webkit-overflow-scrolling:touch]"
                     >
-                      <div className="shrink-0 px-2 pb-3 pt-5 sm:px-4 sm:pb-4 sm:pt-6">
-                        <PulseStrip />
+                      <div className="shrink-0 self-stretch px-2 pb-3 pt-5 sm:px-4 sm:pb-4 sm:pt-6">
+                        <PulseStripRechartsStatic />
                       </div>
-                      <AllGrants
-                        onOpenGrant={openGrant}
-                        variant="operator"
-                        flatChrome
-                        showToolbarNewGrant={false}
-                        pageScrollMode
-                        stickyFilterPrefix={<GrainNavToggle active={grain} onChange={setGrain} size="panel" />}
-                      />
+                      <div className="min-w-0 shrink-0">
+                        <AllGrants
+                          onOpenGrant={openGrant}
+                          variant="operator"
+                          flatChrome
+                          showToolbarNewGrant={false}
+                          pageScrollMode
+                          pageScrollParent={grantsScrollEl}
+                          stickyFilterPrefix={<GrainNavToggle active={grain} onChange={setGrain} size="panel" />}
+                        />
+                      </div>
                     </div>
                   )}
                 </div>
               </section>
 
               {/* Operator chat: outside primary shell; beside table, not under KPIs */}
-              {grain === "all-grants" && operatorChatOpen ? (
-                <aside className="flex min-h-0 w-full shrink-0 flex-col overflow-hidden bg-transparent px-0 pt-6 pb-6 md:max-w-[26rem] md:w-[min(26rem,32vw)] md:shrink-0 md:px-4 md:pt-8 md:pb-6 md:pr-6 xl:pr-8">
-                  <div className="operator-chat-enter flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-elevated-stroke bg-transparent shadow-sm dark:bg-card dark:shadow-sm">
-                    <ChatPanelStandalone
-                      variant="manage"
-                      layout="embedded"
-                      className="h-full min-h-0 overflow-hidden rounded-none border-0 bg-transparent shadow-none backdrop-blur-none dark:bg-transparent"
-                      contextLabel={contextLabel}
-                      onClose={() => setOperatorChatOpen(false)}
-                      title="Grants assistant"
-                      initialMessages={getManageAssistantInitialMessages()}
-                      suggestions={getManageAssistantSuggestions()}
-                    />
+              {(grain === "all-grants" || grain === "command") && operatorChatOpen ? (
+                <aside className="flex min-h-0 w-full shrink-0 flex-col overflow-visible bg-transparent px-0 pt-6 pb-6 md:h-full md:max-h-none md:max-w-[26rem] md:w-[min(26rem,32vw)] md:shrink-0 md:pl-1 md:pt-8 md:pb-6 md:pr-4 xl:pr-5">
+                  <div className="operator-chat-enter flex h-[min(42vh,26rem)] max-h-[480px] min-h-[220px] w-full shrink-0 flex-col overflow-visible rounded-xl border border-elevated-stroke bg-transparent shadow-sm dark:bg-card dark:shadow-sm md:h-full md:max-h-none md:min-h-0">
+                    <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl">
+                      <ChatPanelStandalone
+                        variant="manage"
+                        layout="embedded"
+                        className="h-full min-h-0 overflow-hidden rounded-none border-0 bg-transparent shadow-none backdrop-blur-none dark:bg-transparent"
+                        contextLabel={contextLabel}
+                        onClose={() => setOperatorChatOpen(false)}
+                        title="Grants assistant"
+                        initialMessages={getManageAssistantInitialMessages()}
+                        suggestions={getManageAssistantSuggestions()}
+                      />
+                    </div>
                   </div>
                 </aside>
               ) : null}
@@ -152,10 +202,7 @@ export function MixedPrototype() {
           )}
         </main>
 
-        {grain === "command" && !grant ? (
-          <AgentRail contextLabel={contextLabel} />
-        ) : null}
-        {!grant && grain === "all-grants" && !operatorChatOpen ? (
+        {!grant && (grain === "all-grants" || grain === "command") && !operatorChatOpen ? (
           <button
             type="button"
             onClick={() => setOperatorChatOpen(true)}

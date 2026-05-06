@@ -3,6 +3,7 @@
 import { useId } from "react"
 import { Activity, CircleDot, Scale, Zap, type LucideIcon } from "lucide-react"
 import { Area, AreaChart, ResponsiveContainer, XAxis, YAxis } from "recharts"
+import { KPI_CHART_ANIMATION_DURATION_MS, KPI_CHART_ANIMATION_EASING } from "@/components/manage/all-grants-kpi-tiles"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Source, SourceContent, SourceTrigger } from "@/components/prompt-kit/source"
@@ -235,7 +236,8 @@ export function ChatInlineViz({
               stroke="var(--chart-1)"
               strokeWidth={1.5}
               fill={`url(#${gradId})`}
-              isAnimationActive={false}
+              animationDuration={KPI_CHART_ANIMATION_DURATION_MS}
+              animationEasing={KPI_CHART_ANIMATION_EASING}
             />
           </AreaChart>
         </ResponsiveContainer>

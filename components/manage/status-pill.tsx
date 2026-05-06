@@ -1,4 +1,5 @@
 import type { Stage, FunderType, Priority } from "@/lib/manage/types"
+import { boardStageLabel } from "@/lib/manage/board-report"
 
 /** Stage badge colors aligned to portfolio tracker reference (pastel fill + saturated text, AA-friendly) */
 const stageStyle: Record<Stage, string> = {
@@ -20,7 +21,17 @@ const stageStyle: Record<Stage, string> = {
   Declined: "bg-red-50 text-red-950 dark:bg-red-950/45 dark:text-red-100",
 }
 
-export function StagePill({ stage, className = "" }: { stage: Stage; className?: string }) {
+export function StagePill({
+  stage,
+  audience = "internal",
+  className = "",
+}: {
+  stage: Stage
+  /** Board / Leadership template uses plain-English labels */
+  audience?: "internal" | "board"
+  className?: string
+}) {
+  const label = audience === "board" ? boardStageLabel(stage) : stage
   return (
     <span
       className={[
@@ -30,7 +41,7 @@ export function StagePill({ stage, className = "" }: { stage: Stage; className?:
       ].join(" ")}
     >
       <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-current opacity-70" />
-      <span className="min-w-0 truncate">{stage}</span>
+      <span className="min-w-0 truncate">{label}</span>
     </span>
   )
 }

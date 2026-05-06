@@ -18,6 +18,12 @@ import {
   type ChatTaskAction,
   type ChatViz,
 } from "@/components/manage/chat-inline-viz"
+import {
+  mixAltOverspendSpendCharts,
+  mixAltUnderspendSpendCharts,
+  type MixAltAgentTurn,
+  type MixAltEffect,
+} from "@/components/manage/mix-alt-agent"
 
 /** Matches main shell: TopBar (`h-11` = 2.75rem) + GrainBar (`h-9` = 2.25rem) + 12px breathing room */
 const PANEL_TOP = "calc(2.75rem + 2.25rem + 12px)"
@@ -128,6 +134,14 @@ const USER_TWILIGHT_BUBBLE =
   "text-[hsl(270_52%_11%)] shadow-sm ring-1 ring-[hsl(270_28%_72%)/0.4] " +
   "dark:from-[hsl(260_22%_23%)] dark:via-[hsl(270_20%_21%)] dark:to-[hsl(255_24%_24%)] " +
   "dark:text-[hsl(285_32%_88%)] dark:ring-white/12"
+
+/** Mix Alt suggestion chips: compact, solid light twilight fill; hover is a shade darker only */
+const MIX_ALT_SUGGESTION_CHIP =
+  "rounded-full border border-twilight-200/65 bg-twilight-50 px-2.5 py-0.5 text-[12px] font-medium leading-snug text-twilight-350 " +
+  "transition-[background-color,border-color] duration-150 ease-out " +
+  "enabled:hover:border-twilight-200 enabled:hover:bg-twilight-100 " +
+  "dark:border-twilight-350/40 dark:bg-twilight-350/12 dark:text-[hsl(285_32%_88%)] " +
+  "dark:enabled:hover:border-twilight-350/50 dark:enabled:hover:bg-twilight-350/20"
 
 /** How long each thinking-line stays visible before rotating (ms) */
 const THINKING_ROTATION_MS = 700
@@ -262,6 +276,14 @@ export function ChatPanelStandalone({
   showCloseButton = true,
   streamMaxMs,
   className,
+  scriptedTurn,
+  onScriptedEffects,
+  scriptedFallbackOnly,
+  fallbackBody,
+  onMixAltTaskAction,
+  mixAltChartFollowUps,
+  scriptedAgentPlainText,
+  mixAltTwilightQuickPrompts,
 }: {
   contextLabel: string
   onClose?: () => void
@@ -274,6 +296,19 @@ export function ChatPanelStandalone({
   streamMaxMs?: number
   /** Merged onto the root panel; useful when embedding inside a parent frame */
   className?: string
+  scriptedTurn?: (userText: string) => MixAltAgentTurn | null
+  onScriptedEffects?: (effects: MixAltEffect[]) => void
+  /** When true and `scriptedTurn` returns null, use `fallbackBody` instead of built-in `buildAgentReply`. */
+  scriptedFallbackOnly?: boolean
+  fallbackBody?: string
+  /** Return true when handled (mixalt:// links). */
+  onMixAltTaskAction?: (action: ChatTaskAction) => boolean
+  /** Mix Alt: append spend pace charts for mixalt://chart/spend-* instead of toasts. */
+  mixAltChartFollowUps?: boolean
+  /** Mix Alt: agent replies render as plain text (no Markdown bold). */
+  scriptedAgentPlainText?: boolean
+  /** Mix Alt: twilight quick prompts; hover darkens fill slightly. */
+  mixAltTwilightQuickPrompts?: boolean
 }) {
   const [input, setInput] = useState("")
   const [thinkingPhase, setThinkingPhase] = useState<ThinkingPhase>("idle")
@@ -301,20 +336,57 @@ export function ChatPanelStandalone({
     bottomRef.current?.scrollIntoView({ behavior: "smooth" })
   }, [])
 
-  const handleTaskAction = useCallback((action: ChatTaskAction) => {
-    const { toastTitle, toastDescription, followUpBody } = taskFollowThrough(action)
-    toast.success(toastTitle, { description: toastDescription })
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        role: "agent",
-        markdown: true,
-        at: Date.now(),
-        body: followUpBody,
-      },
-    ])
-  }, [])
+  const handleTaskAction = useCallback(
+    (action: ChatTaskAction) => {
+      const href = action.href
+      if (mixAltChartFollowUps) {
+        if (href === "mixalt://chart/spend-underspend") {
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: `mix-chart-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+              role: "agent",
+              markdown: false,
+              at: Date.now(),
+              body:
+                "Cumulative spend vs expected pace (prototype). Metrics reflect the underspend scenario; lines show modeled burn as a percentage of the award.",
+              viz: mixAltUnderspendSpendCharts(),
+            },
+          ])
+          return
+        }
+        if (href === "mixalt://chart/spend-overspend") {
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: `mix-chart-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+              role: "agent",
+              markdown: false,
+              at: Date.now(),
+              body:
+                "Spend is ahead of the linear pace implied by elapsed grant time (prototype). Charts compare expected vs actual cumulative burn.",
+              viz: mixAltOverspendSpendCharts(),
+            },
+          ])
+          return
+        }
+      }
+      if (onMixAltTaskAction?.(action)) return
+      const { toastTitle, toastDescription, followUpBody } = taskFollowThrough(action)
+      toast.success(toastTitle, { description: toastDescription })
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          role: "agent",
+          markdown: true,
+          at: Date.now(),
+          body: followUpBody,
+        },
+      ])
+    },
+    [mixAltChartFollowUps, onMixAltTaskAction],
+  )
 
   useEffect(() => {
     scrollToBottom()
@@ -340,24 +412,51 @@ export function ChatPanelStandalone({
       const t1 = window.setTimeout(() => {
         setThinkingPhase("exiting")
         const t2 = window.setTimeout(() => {
-          const reply = buildAgentReply(t, contextLabel)
-          const agentMsg: AgentMessage = {
-            id: `a-${Date.now()}`,
-            role: "agent",
-            markdown: true,
-            at: Date.now(),
-            body: reply.body,
-            sources: reply.sources,
-            viz: reply.viz,
+          const scripted = scriptedTurn?.(t)
+          if (scripted) {
+            if (scripted.effects.length && onScriptedEffects) {
+              onScriptedEffects(scripted.effects)
+            }
+            const agentMd = !(scriptedAgentPlainText ?? false)
+            const agentMsg: AgentMessage = {
+              id: `a-${Date.now()}`,
+              role: "agent",
+              markdown: agentMd,
+              at: Date.now(),
+              body: scripted.agentBody,
+              sources: scripted.sources,
+              viz: scripted.viz,
+            }
+            setMessages((prev) => [...prev, agentMsg])
+          } else if (scriptedFallbackOnly && fallbackBody !== undefined) {
+            const agentMsg: AgentMessage = {
+              id: `a-${Date.now()}`,
+              role: "agent",
+              markdown: !(scriptedAgentPlainText ?? false),
+              at: Date.now(),
+              body: fallbackBody,
+            }
+            setMessages((prev) => [...prev, agentMsg])
+          } else {
+            const reply = buildAgentReply(t, contextLabel)
+            const agentMsg: AgentMessage = {
+              id: `a-${Date.now()}`,
+              role: "agent",
+              markdown: true,
+              at: Date.now(),
+              body: reply.body,
+              sources: reply.sources,
+              viz: reply.viz,
+            }
+            setMessages((prev) => [...prev, agentMsg])
           }
-          setMessages((prev) => [...prev, agentMsg])
           setThinkingPhase("idle")
         }, THINKING_EXIT_MS)
         thinkingTimeoutsRef.current.push(t2)
       }, thinkMs)
       thinkingTimeoutsRef.current.push(t1)
     },
-    [thinkingPhase, contextLabel, clearThinkingTimeouts],
+    [thinkingPhase, contextLabel, clearThinkingTimeouts, scriptedTurn, onScriptedEffects, scriptedFallbackOnly, fallbackBody, scriptedAgentPlainText],
   )
 
   const mdClass = cn(
@@ -469,7 +568,12 @@ export function ChatPanelStandalone({
               type="button"
               disabled={isThinkingBusy}
               onClick={() => send(s)}
-              className="rounded-full border border-border/60 bg-background/80 px-2 py-0.5 text-[11px] text-muted-foreground transition-colors hover:border-primary/25 hover:text-foreground disabled:opacity-40"
+              className={cn(
+                "disabled:opacity-40",
+                mixAltTwilightQuickPrompts
+                  ? MIX_ALT_SUGGESTION_CHIP
+                  : "rounded-full border border-border/60 bg-background/80 px-2 py-0.5 text-[11px] text-muted-foreground transition-colors hover:border-primary/25 hover:text-foreground",
+              )}
             >
               {s}
             </button>
@@ -525,20 +629,28 @@ function AgentMessageTurn({
   panelVariant?: "manage" | "operator"
   onTaskAction?: (action: ChatTaskAction) => void
 }) {
-  const [streamDone, setStreamDone] = useState(false)
+  const [streamDone, setStreamDone] = useState(() => !m.markdown)
+
+  useEffect(() => {
+    if (!m.markdown) scrollToBottom()
+  }, [m.markdown, m.id, m.body, scrollToBottom])
 
   return (
     <article className="min-w-0">
-      <StreamingAssistantMarkdown
-        text={m.body}
-        className={mdClass}
-        maxStreamMs={maxStreamMs}
-        onProgress={scrollToBottom}
-        onComplete={() => {
-          setStreamDone(true)
-          scrollToBottom()
-        }}
-      />
+      {m.markdown ? (
+        <StreamingAssistantMarkdown
+          text={m.body}
+          className={mdClass}
+          maxStreamMs={maxStreamMs}
+          onProgress={scrollToBottom}
+          onComplete={() => {
+            setStreamDone(true)
+            scrollToBottom()
+          }}
+        />
+      ) : (
+        <p className="max-w-none whitespace-pre-wrap text-[14px] leading-relaxed text-foreground/95">{m.body}</p>
+      )}
       {streamDone ? (
         <>
           {m.viz?.length ? (
@@ -562,12 +674,8 @@ function AgentMessageTurn({
               }
               return (
                 <div className="mt-4 space-y-3 border-t border-border/40 pt-3">
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Snapshot</p>
                   {kpiBlocks.length ? (
                     <div className="space-y-3">
-                      <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/90">
-                        KPIs & trends
-                      </p>
                       {kpiBlocks.map((block, i) => (
                         <ChatInlineViz key={`${m.id}-viz-kpi-${i}`} viz={block} staggerMs={i * 100} />
                       ))}
@@ -848,6 +956,31 @@ function buildAgentReply(
           ],
         },
       ],
+    }
+  }
+
+  if (t.includes("why") && (t.includes("racine") || t.includes("underspend"))) {
+    const racineNamed = t.includes("racine")
+    return {
+      body: racineNamed
+        ? `**Racine Community Foundation** is flagged because spend is behind expected pace for this stage of the grant: **40%** of the budget used with **80%** of the period elapsed. We flag underspend when usage is more than **20 percentage points** behind a linear pace. The metrics below show the spenddown picture as a share of the award.`
+        : `This grant is flagged because spend is behind expected pace: **40%** of the budget used with **80%** of the period elapsed. We flag underspend when usage is more than **20 percentage points** behind linear pace — see metrics below.`,
+      sources: racineNamed
+        ? [
+            {
+              title: "Racine Community Foundation",
+              detail: "Award · spend vs period (prototype)",
+              href: "https://www.instrumentl.com",
+            },
+          ]
+        : [
+            {
+              title: "Spend flags · portfolio rules",
+              detail: "Underspend threshold (prototype)",
+              href: "https://www.instrumentl.com",
+            },
+          ],
+      viz: mixAltUnderspendSpendCharts(),
     }
   }
 

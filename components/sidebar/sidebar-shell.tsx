@@ -29,7 +29,7 @@ export function SidebarShell({ sidebarState, children }: SidebarShellProps) {
 
   return (
     <TooltipProvider>
-      <div className="group/sidebar relative flex-shrink-0">
+      <div className="group/sidebar relative flex h-full min-h-0 min-w-0 flex-shrink-0 flex-col">
         {/* Floating collapse buttons - positioned with fixed, outside main sidebar div */}
         <SidebarCollapseButtons sidebarState={sidebarState} />
         

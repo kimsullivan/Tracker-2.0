@@ -1,3 +1,4 @@
+import { cn } from "@/lib/utils"
 import { team } from "@/lib/manage/data"
 
 export function OwnerAvatar({ id, size = 22 }: { id: string; size?: number }) {
@@ -19,13 +20,14 @@ export function OwnerAvatar({ id, size = 22 }: { id: string; size?: number }) {
   )
 }
 
-export function OwnerCell({ id }: { id: string }) {
+export function OwnerCell({ id, nameClassName }: { id: string; nameClassName?: string }) {
   const member = team.find((t) => t.id === id)
-  if (!member) return <span className="text-muted-foreground text-xs">—</span>
+  if (!member)
+    return <span className={cn("truncate", nameClassName ?? "text-xs text-muted-foreground")}>—</span>
   return (
-    <div className="flex items-center gap-1.5 min-w-0">
-      <OwnerAvatar id={id} size={20} />
-      <span className="truncate text-xs text-foreground">{member.name.split(" ")[0]}</span>
+    <div className="flex min-w-0 items-center gap-1.5">
+      <OwnerAvatar id={id} size={18} />
+      <span className={cn("truncate", nameClassName ?? "text-xs text-foreground")}>{member.name.split(" ")[0]}</span>
     </div>
   )
 }

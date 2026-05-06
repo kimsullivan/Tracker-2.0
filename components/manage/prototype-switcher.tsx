@@ -4,7 +4,8 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { cn } from "@/lib/utils"
 
 const MODES = [
-  { param: null as string | null, label: "Static command center" },
+  { param: null as string | null, label: "Mixed alt" },
+  { param: "static" as const, label: "Static command center" },
   { param: "operator" as const, label: "Operator chat" },
   { param: "mixed" as const, label: "Mixed" },
 ]
@@ -45,7 +46,9 @@ export function PrototypeSwitcher({
     >
       {MODES.map((m) => {
         const selected =
-          m.param === null ? current === null || current === "" : current === m.param
+          m.param === null
+            ? current === null || current === "" || current === "mixed-alt"
+            : current === m.param
         return (
           <button
             key={m.label}

@@ -251,6 +251,25 @@
   }
 }
 
+/** Mixed prototype: global overflow on html/body breaks nested `overflow-y:auto` + `position:sticky`. Scoped while Mixed mounts. */
+html.mixed-scroll-sticky-compat,
+body.mixed-scroll-sticky-compat {
+  overflow-x: visible !important;
+  overflow-y: visible !important;
+}
+
+@layer utilities {
+  /**
+   * Soft `box-shadow` paints outside an element's border box but is still clipped by any ancestor
+   * with non-visible overflow—including `overflow-y: auto` / `scroll` / `hidden` (and `overflow-x:
+   * visible` is upgraded to `auto` whenever another axis clips, so shadows get cropped sideways too).
+   * `overflow-clip-margin` expands the clip box slightly without changing layout (Chromium/WebKit/newer Fx).
+   */
+  .shadow-bleed-scroll {
+    overflow-clip-margin: 22px;
+  }
+}
+
 /* Broken image fallback */
 img.broken-image-fallback {
   position: relative;

@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils"
 
 export type Grain = "command" | "all-grants"
 
-/** My work / All grants segment control — used under the grain bar or below KPIs in the mixed prototype. */
+/** My work / All grants — mixed prototypes. */
 export function GrainNavToggle({
   active,
   onChange,

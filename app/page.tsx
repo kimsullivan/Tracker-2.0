@@ -11,6 +11,7 @@ import { GrantPage } from "@/components/manage/grant-page"
 import { AgentRail } from "@/components/manage/agent-rail"
 import { ChatPanelStandalone } from "@/components/manage/chat-panel.standalone"
 import { MixedPrototype } from "@/components/manage/mixed-prototype"
+import { MixedPrototypeAlt } from "@/components/manage/mixed-prototype-alt"
 import { OPERATOR_INITIAL_MESSAGES, OPERATOR_SUGGESTIONS } from "@/components/manage/operator-initial"
 import { grants } from "@/lib/manage/data"
 import { ManagePrototypeSidebar } from "@/components/sidebar/manage-prototype-sidebar"
@@ -21,23 +22,18 @@ function StaticCommandCenter() {
 
   const grant = activeGrantId ? grants.find((g) => g.id === activeGrantId) : null
 
-  function openGrant(id: string) {
+  function openGrant(id: string, _ctx?: unknown) {
     setActiveGrantId(id)
-    setGrain("all-grants")
   }
 
   function closeGrant() {
     setActiveGrantId(null)
   }
 
-  const contextLabel = grant
-    ? grant.title
-    : grain === "command"
-      ? "My work"
-      : "All grants table"
+  const contextLabel = grant ? grant.title : grain === "command" ? "My work" : "All grants table"
 
   return (
-    <div className="flex min-h-screen w-full min-w-0 max-w-[100vw] overflow-x-hidden bg-white">
+    <div className="shadow-bleed-scroll flex min-h-screen w-full min-w-0 max-w-[100vw] overflow-x-hidden bg-white">
       <ManagePrototypeSidebar
         grain={grain}
         onRequestGrain={(g) => {
@@ -46,7 +42,7 @@ function StaticCommandCenter() {
         }}
         onClearGrant={() => setActiveGrantId(null)}
       />
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden">
+      <div className="shadow-bleed-scroll flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden">
         <TopBar showNewGrant={!grant && grain === "all-grants"} />
         <GrainBar
           active={grain}
@@ -66,15 +62,15 @@ function StaticCommandCenter() {
 
         <main className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
           {grant ? (
-            <div className="min-h-0 min-w-0 flex-1 overflow-auto">
+            <div className="shadow-bleed-scroll min-h-0 min-w-0 flex-1 overflow-auto">
               <GrantPage grantId={grant.id} />
             </div>
           ) : grain === "command" ? (
-            <div className="min-h-0 min-w-0 flex-1 overflow-auto">
+            <div className="shadow-bleed-scroll min-h-0 min-w-0 flex-1 overflow-auto">
               <CommandCenter onOpenGrant={openGrant} />
             </div>
           ) : (
-            <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+            <div className="shadow-bleed-scroll min-h-0 min-w-0 flex-1 overflow-auto">
               <AllGrants
                 onOpenGrant={openGrant}
                 showToolbarNewGrant={grant !== null || grain !== "all-grants"}
@@ -108,7 +104,7 @@ function OperatorAllGrants() {
   const contextLabel = grant ? grant.title : "All grants table"
 
   return (
-    <div className="flex min-h-screen w-full min-w-0 max-w-[100vw] overflow-x-hidden bg-white">
+    <div className="shadow-bleed-scroll flex min-h-screen w-full min-w-0 max-w-[100vw] overflow-x-hidden bg-white">
       <ManagePrototypeSidebar
         grain="all-grants"
         onRequestGrain={(g) => {
@@ -116,7 +112,7 @@ function OperatorAllGrants() {
         }}
         onClearGrant={closeGrant}
       />
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden">
+      <div className="shadow-bleed-scroll flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden">
         <TopBar showNewGrant={!grant} showBottomStroke={false} />
         {grant ? (
           <GrainBar
@@ -129,12 +125,12 @@ function OperatorAllGrants() {
 
         <main className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
           {grant ? (
-            <div className="min-h-0 min-w-0 flex-1 overflow-auto">
+            <div className="shadow-bleed-scroll min-h-0 min-w-0 flex-1 overflow-auto">
               <GrantPage grantId={grant.id} />
             </div>
           ) : (
             <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col gap-6 p-6 md:flex-row">
-              <div className="order-1 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+              <div className="shadow-bleed-scroll order-1 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
                 <AllGrants
                   onOpenGrant={openGrant}
                   variant="operator"
@@ -143,7 +139,8 @@ function OperatorAllGrants() {
                 />
               </div>
               {operatorChatOpen ? (
-                <div className="operator-chat-enter order-2 flex h-[min(42vh,26rem)] max-h-[480px] min-h-[220px] w-full shrink-0 flex-col overflow-hidden rounded-xl border border-twilight-200 bg-white shadow-[0_14px_44px_-10px_rgba(61,58,138,0.22)] md:h-full md:max-h-none md:min-h-0 md:w-[min(26rem,34vw)] md:max-w-[26rem] md:shrink-0 dark:border-twilight-350/35 dark:shadow-[0_18px_56px_-12px_rgba(61,58,138,0.42)]">
+                <div className="operator-chat-enter order-2 flex h-[min(42vh,26rem)] max-h-[480px] min-h-[220px] w-full shrink-0 flex-col overflow-visible rounded-xl border border-twilight-200 bg-white shadow-[0_14px_44px_-10px_rgba(61,58,138,0.22)] md:h-full md:max-h-none md:min-h-0 md:w-[min(26rem,34vw)] md:max-w-[26rem] md:shrink-0 dark:border-twilight-350/35 dark:shadow-[0_18px_56px_-12px_rgba(61,58,138,0.42)]">
+                  <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl">
                   <ChatPanelStandalone
                     variant="operator"
                     layout="embedded"
@@ -155,6 +152,7 @@ function OperatorAllGrants() {
                     suggestions={OPERATOR_SUGGESTIONS}
                     streamMaxMs={5600}
                   />
+                  </div>
                 </div>
               ) : null}
             </div>
@@ -189,7 +187,11 @@ function PageContent() {
   if (prototype === "mixed") {
     return <MixedPrototype />
   }
-  return <StaticCommandCenter />
+  if (prototype === "static") {
+    return <StaticCommandCenter />
+  }
+  /** Default home: Mixed alt (`?prototype=mixed-alt` still supported for bookmarks). */
+  return <MixedPrototypeAlt />
 }
 
 export default function Page() {

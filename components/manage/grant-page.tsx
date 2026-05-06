@@ -1,13 +1,15 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { grants, team } from "@/lib/manage/data"
+import type { IssueNavigationContext } from "@/lib/manage/types"
 import { StagePill } from "./status-pill"
 import { OwnerAvatar } from "./owner-avatar"
-import { ArrowRight, Check, FileText, MoreHorizontal, Plus, Sparkles } from "lucide-react"
+import { ArrowRight, Check, FileText, MoreHorizontal, Plus, Sparkles, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { toast } from "sonner"
+import { cn } from "@/lib/utils"
 
 const TABS = ["Work", "Notes", "Applications", "Opportunity", "Financials", "Documents"] as const
 type Tab = (typeof TABS)[number]
@@ -22,10 +24,37 @@ const LIFECYCLE = [
   "Closed",
 ] as const
 
-export function GrantPage({ grantId }: { grantId: string }) {
+export function GrantPage({
+  grantId,
+  issueHighlight,
+  onDismissHighlight,
+}: {
+  grantId: string
+  issueHighlight?: IssueNavigationContext | null
+  onDismissHighlight?: () => void
+}) {
   const grant = grants.find((g) => g.id === grantId) || grants[0]
   const [tab, setTab] = useState<Tab>("Work")
   const owner = team.find((t) => t.id === grant.ownerId)
+  const hk = issueHighlight?.fieldKey
+
+  useEffect(() => {
+    if (!issueHighlight) return
+    const k = issueHighlight.fieldKey
+    if (k === "budget_spend") setTab("Financials")
+    else if (k === "logic_model" || k === "full_application") setTab("Applications")
+    else if (k === "grant_documents") setTab("Documents")
+    else setTab("Work")
+  }, [issueHighlight])
+
+  useEffect(() => {
+    if (!hk) return
+    const t = window.setTimeout(() => {
+      const el = document.getElementById(`highlight-${hk}`)
+      el?.scrollIntoView({ block: "center", behavior: "smooth" })
+    }, 100)
+    return () => clearTimeout(t)
+  }, [hk, tab])
 
   const stageIndex =
     grant.stage === "Awarded - Active" ? 5 :
@@ -38,6 +67,27 @@ export function GrantPage({ grantId }: { grantId: string }) {
 
   return (
     <div className="mx-auto max-w-7xl px-6 py-6 space-y-6">
+      {issueHighlight ? (
+        <div
+          className="flex flex-wrap items-start justify-between gap-3 rounded-lg border border-primary/25 bg-primary/[0.06] px-4 py-3 text-sm text-foreground"
+          role="status"
+        >
+          <p className="min-w-0 leading-snug">
+            <span className="font-semibold">Highlighted: {issueHighlight.fieldLabel}</span>
+            <span className="text-muted-foreground"> — {issueHighlight.reason}</span>
+          </p>
+          {onDismissHighlight ? (
+            <button
+              type="button"
+              onClick={onDismissHighlight}
+              className="shrink-0 rounded-md p-1 text-muted-foreground hover:bg-background/80 hover:text-foreground"
+              aria-label="Dismiss highlight"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       {/* Header */}
       <div className="flex flex-col gap-4">
         <div className="flex items-start justify-between gap-4">
@@ -57,7 +107,13 @@ export function GrantPage({ grantId }: { grantId: string }) {
                 </>
               )}
               <span className="text-muted-foreground/40">·</span>
-              <div className="flex items-center gap-1.5">
+              <div
+                id="highlight-owner"
+                className={cn(
+                  "flex items-center gap-1.5 rounded-md transition-colors",
+                  hk === "owner" && "ring-2 ring-primary/35 ring-offset-2 ring-offset-background",
+                )}
+              >
                 <OwnerAvatar id={grant.ownerId} size={18} />
                 <span>{owner?.name}</span>
               </div>
@@ -134,22 +190,22 @@ export function GrantPage({ grantId }: { grantId: string }) {
         </TabsList>
 
         <TabsContent value="Work" className="mt-6">
-          <WorkTab grantId={grant.id} />
+          <WorkTab grantId={grant.id} highlightKey={hk} />
         </TabsContent>
         <TabsContent value="Notes" className="mt-6">
           <NotesTab />
         </TabsContent>
         <TabsContent value="Applications" className="mt-6">
-          <ApplicationsTab />
+          <ApplicationsTab highlightKey={hk} />
         </TabsContent>
         <TabsContent value="Opportunity" className="mt-6">
           <OpportunityTab />
         </TabsContent>
         <TabsContent value="Financials" className="mt-6">
-          <FinancialsTab />
+          <FinancialsTab highlightKey={hk} />
         </TabsContent>
         <TabsContent value="Documents" className="mt-6">
-          <DocumentsTab />
+          <DocumentsTab highlightKey={hk} />
         </TabsContent>
       </Tabs>
     </div>
@@ -173,10 +229,43 @@ const activity = [
   { id: "ac4", color: "muted", title: "Award letter received", body: "Dr. Patel countersigned. Period of performance 09/01/24 — 08/31/25.", time: "Mar 10" },
 ]
 
-function WorkTab({ grantId }: { grantId: string }) {
+function WorkTab({ grantId: _grantId, highlightKey }: { grantId: string; highlightKey?: string }) {
   return (
     <div className="grid gap-6 lg:grid-cols-[1fr_300px]">
       <div className="space-y-6">
+        <div
+          id="highlight-full_proposal_deadline"
+          className={cn(
+            "rounded-xl border border-border bg-card p-4 transition-shadow",
+            highlightKey === "full_proposal_deadline" && "ring-2 ring-primary/35 bg-primary/[0.04]",
+          )}
+        >
+          <h3 className="font-heading text-sm font-bold text-card-foreground">Key dates</h3>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            <div className="flex justify-between gap-4 text-xs">
+              <span className="text-muted-foreground">Full proposal deadline</span>
+              <span className="font-medium tabular-nums text-card-foreground">May 12, 2025 · 11:59pm ET</span>
+            </div>
+            <div className="flex justify-between gap-4 text-xs">
+              <span className="text-muted-foreground">Internal review</span>
+              <span className="font-medium tabular-nums text-card-foreground">May 9, 2025</span>
+            </div>
+          </div>
+        </div>
+
+        <div
+          id="highlight-integration_status"
+          className={cn(
+            "rounded-xl border border-border bg-card px-4 py-3 text-xs transition-shadow",
+            highlightKey === "integration_status" && "ring-2 ring-primary/35 bg-primary/[0.04]",
+          )}
+        >
+          <span className="font-semibold text-card-foreground">Integrations</span>
+          <p className="mt-1 text-muted-foreground">
+            Epic utilization feed · last sync Apr 28 · <span className="text-amber-700 dark:text-amber-300">manual refresh suggested</span>
+          </p>
+        </div>
+
         {/* Open work */}
         <div className="rounded-xl border border-border bg-card overflow-hidden">
           <div className="flex items-center justify-between border-b border-border px-4 py-3">
@@ -390,7 +479,7 @@ function NotesTab() {
 
 /* ---------------- Applications / Cycles ---------------- */
 
-function ApplicationsTab() {
+function ApplicationsTab({ highlightKey }: { highlightKey?: string }) {
   const cycles = [
     { id: "y1", label: "Y1 — 2024", status: "Won", dot: "chart-3" },
     { id: "y2", label: "Y2 — 2025", status: "Awarded · Active", dot: "primary", active: true },
@@ -455,7 +544,14 @@ function ApplicationsTab() {
           <h4 className="font-heading text-sm font-bold text-card-foreground">Requirements checklist</h4>
           <ul className="space-y-1.5">
             {requirements.map((r) => (
-              <li key={r.id} className="flex items-center gap-2 text-xs">
+              <li
+                key={r.id}
+                id={r.id === "r3" ? "highlight-logic_model" : undefined}
+                className={cn(
+                  "flex items-center gap-2 rounded-md px-1 py-0.5 text-xs",
+                  highlightKey === "logic_model" && r.id === "r3" && "ring-2 ring-primary/35 bg-primary/[0.05]",
+                )}
+              >
                 <span
                   className={[
                     "flex h-4 w-4 items-center justify-center rounded border",
@@ -564,7 +660,7 @@ function OpportunityTab() {
 
 /* ---------------- Financials ---------------- */
 
-function FinancialsTab() {
+function FinancialsTab({ highlightKey }: { highlightKey?: string }) {
   const summary = [
     { label: "Award", value: "$487,500" },
     { label: "Drawn to date", value: "$184,250", sub: "38%" },
@@ -586,7 +682,13 @@ function FinancialsTab() {
   ]
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+      <div
+        id="highlight-budget_spend"
+        className={cn(
+          "grid grid-cols-2 gap-3 md:grid-cols-5 transition-shadow",
+          highlightKey === "budget_spend" && "rounded-xl ring-2 ring-primary/35 bg-primary/[0.04] p-3 -m-1",
+        )}
+      >
         {summary.map((s) => (
           <div key={s.label} className="rounded-xl border border-border bg-card p-3">
             <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{s.label}</div>
@@ -663,7 +765,7 @@ function FinancialsTab() {
 
 /* ---------------- Documents ---------------- */
 
-function DocumentsTab() {
+function DocumentsTab({ highlightKey }: { highlightKey?: string }) {
   const groups = [
     {
       label: "Award documents",
@@ -709,7 +811,17 @@ function DocumentsTab() {
           </div>
           <ul className="divide-y divide-border">
             {g.items.map((item, i) => (
-              <li key={i} className="flex items-center gap-3 px-4 py-2.5 hover:bg-muted/40">
+              <li
+                key={i}
+                id={g.label === "Application materials" && item.name === "Logic Model" ? "highlight-grant_documents" : undefined}
+                className={cn(
+                  "flex items-center gap-3 px-4 py-2.5 hover:bg-muted/40",
+                  highlightKey === "grant_documents" &&
+                    g.label === "Application materials" &&
+                    item.name === "Logic Model" &&
+                    "ring-2 ring-inset ring-primary/35 bg-primary/[0.04]",
+                )}
+              >
                 <span
                   className={[
                     "inline-flex w-12 justify-center rounded border px-1.5 py-0.5 text-[10px] font-bold",

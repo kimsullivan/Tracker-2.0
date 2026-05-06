@@ -1,9 +1,12 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import type { ReactNode } from "react"
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
+import { usePathname, useRouter, useSearchParams } from "next/navigation"
+import { useScrollDockPins } from "@/hooks/use-scroll-dock-pins"
+import type { CSSProperties, ReactNode } from "react"
 import { grants as grantsData, stageOrder, team } from "@/lib/manage/data"
 import type { Grant, Stage } from "@/lib/manage/types"
+import { grantDeadlineInCalendarYear } from "@/lib/manage/board-report"
 import { cn } from "@/lib/utils"
 import { PriorityPill, StagePill } from "./status-pill"
 import { OwnerAvatar } from "./owner-avatar"
@@ -15,6 +18,7 @@ import {
   ChevronDown,
   ChevronRight,
   Columns3,
+  Download,
   Filter,
   Flag,
   GripVertical,
@@ -25,6 +29,15 @@ import {
   X,
 } from "lucide-react"
 import { toast } from "sonner"
+import {
+  applyFunderPortfolioKpiFilters,
+  awardedSumGrant,
+  DEFAULT_FUNDER_PORTFOLIO_KPI,
+  pickLastActivityDisplay,
+  renewalStatusForGrant,
+  type FunderPortfolioKpiState,
+} from "@/lib/manage/funder-portfolio"
+import { PulseStripFunderPortfolio } from "@/components/manage/funder-portfolio-kpi-tiles"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
@@ -37,12 +50,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-type ColKey =
+export type ColKey =
   | "grant"
   | "funder"
   | "status"
   | "deadline"
   | "award"
+  | "amountRequested"
+  | "notificationDate"
   | "owner"
   | "cycle"
   | "fundingSource"
@@ -55,6 +70,12 @@ type ColKey =
   | "projectGroup"
   | "priority"
   | "renewal"
+  /** Funder portfolio saved-view lens — grant-backed cells, portfolio column set only */
+  | "fpFunder"
+  | "fpFunderType"
+  | "fpTotalAwarded"
+  | "fpLastActivity"
+  | "fpRenewalStatus"
 
 type ColDef = {
   key: ColKey
@@ -67,11 +88,13 @@ type ColDef = {
 
 /** Fixed / minmax(px,px) widths only — no `fr` tracks, or the grid shrinks to the viewport and horizontal scroll disappears. */
 const COLUMNS: ColDef[] = [
-  { key: "grant", label: "Grant", width: "320px", group: "system", defaultVisible: true, locked: true },
+  { key: "grant", label: "Grant", width: "320px", group: "system", defaultVisible: true },
   { key: "funder", label: "Funder", width: "240px", group: "system", defaultVisible: true },
   { key: "status", label: "Status", width: "260px", group: "system", defaultVisible: true },
   { key: "deadline", label: "Deadline", width: "180px", group: "system", defaultVisible: true },
   { key: "award", label: "Award", width: "132px", group: "system", defaultVisible: true },
+  { key: "amountRequested", label: "Amount requested", width: "132px", group: "system", defaultVisible: false },
+  { key: "notificationDate", label: "Notification date", width: "140px", group: "system", defaultVisible: false },
   { key: "owner", label: "Owner", width: "144px", group: "system", defaultVisible: true },
   { key: "cycle", label: "Cycle", width: "96px", group: "system", defaultVisible: true },
   { key: "fundingSource", label: "Funding source", width: "220px", group: "system", defaultVisible: true },
@@ -84,10 +107,43 @@ const COLUMNS: ColDef[] = [
   { key: "projectGroup", label: "Project group", width: "160px", group: "custom", defaultVisible: true },
   { key: "priority", label: "Priority", width: "96px", group: "custom", defaultVisible: true },
   { key: "renewal", label: "Renewal", width: "120px", group: "custom", defaultVisible: true },
+  { key: "fpFunder", label: "Funder", width: "240px", group: "custom", defaultVisible: false },
+  { key: "fpFunderType", label: "Funder type", width: "140px", group: "custom", defaultVisible: false },
+  { key: "fpTotalAwarded", label: "Total awarded", width: "140px", group: "custom", defaultVisible: false },
+  { key: "fpLastActivity", label: "Last activity", width: "140px", group: "custom", defaultVisible: false },
+  { key: "fpRenewalStatus", label: "Renewal status", width: "180px", group: "custom", defaultVisible: false },
 ]
 
 /** All column keys except Grant — Grant stays pinned first; these may be reordered. */
 const NON_GRANT_COLUMN_KEYS: ColKey[] = COLUMNS.filter((c) => c.key !== "grant").map((c) => c.key)
+
+/** All non-grant columns in `COLUMNS` order, excluding rollup-only `fp*` — wide layouts for horizontal scroll. */
+const TABLE_SCROLL_FILL_COL_ORDER: ColKey[] = COLUMNS.filter(
+  (c) => c.key !== "grant" && !c.key.startsWith("fp"),
+).map((c) => c.key)
+
+/**
+ * After **Grant**: awarded → last activity → deadline, then remaining fields.
+ * **Funder** omitted (name on group row). No renewal columns in this lens for now.
+ */
+const FUNDER_PORTFOLIO_TABLE_COL_ORDER: ColKey[] = [
+  "award",
+  "lastUpdated",
+  "deadline",
+  "status",
+  "amountRequested",
+  "notificationDate",
+  "owner",
+  "cycle",
+  "fundingSource",
+  "fain",
+  "cfda",
+  "period",
+  "indirect",
+  "match",
+  "projectGroup",
+  "priority",
+]
 
 const DND_COLUMN_MIME = "application/x-ccn-grant-col"
 
@@ -103,9 +159,9 @@ function reorderColumns(order: ColKey[], from: ColKey, to: ColKey): ColKey[] {
   return next
 }
 
-type GroupBy = "stage" | "owner" | "funderType" | "projectGroup" | "deadline" | "none"
+export type GroupBy = "stage" | "owner" | "funderType" | "funder" | "projectGroup" | "deadline" | "none"
 
-type SortDir = "asc" | "desc"
+export type SortDir = "asc" | "desc"
 
 const PRIORITY_SORT: Record<Grant["priority"], number> = {
   P0: 0,
@@ -135,6 +191,10 @@ function sortValueForColumn(g: Grant, key: ColKey): string | number {
       return new Date(g.deadline).getTime()
     case "award":
       return g.award
+    case "amountRequested":
+      return g.weighted ?? 0
+    case "notificationDate":
+      return g.lastUpdated.toLowerCase()
     case "owner":
       return (team.find((t) => t.id === g.ownerId)?.name ?? "").toLowerCase()
     case "cycle":
@@ -161,6 +221,16 @@ function sortValueForColumn(g: Grant, key: ColKey): string | number {
       return PRIORITY_SORT[g.priority]
     case "renewal":
       return RENEWAL_SORT[g.renewalLikelihood]
+    case "fpFunder":
+      return g.funder.toLowerCase()
+    case "fpFunderType":
+      return g.funderType.toLowerCase()
+    case "fpTotalAwarded":
+      return awardedSumGrant(g)
+    case "fpLastActivity":
+      return g.lastUpdated.toLowerCase()
+    case "fpRenewalStatus":
+      return renewalStatusForGrant(g, new Date()).toLowerCase()
     default:
       return ""
   }
@@ -176,6 +246,12 @@ function compareGrantRows(a: Grant, b: Grant, key: ColKey, dir: SortDir): number
     cmp = String(va).localeCompare(String(vb), undefined, { numeric: true, sensitivity: "base" })
   }
   return dir === "asc" ? cmp : -cmp
+}
+
+function fmtBoard$(n: number): string {
+  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`
+  if (n >= 1_000) return `$${(n / 1_000).toFixed(0)}K`
+  return `$${Math.round(n)}`
 }
 
 /** Calendar date from ISO `YYYY-MM-DD` in local time (avoids UTC off-by-one). */
@@ -223,6 +299,8 @@ function formatDeadlineMonthGroupLabel(key: string): string {
 
 const SAVED_VIEWS = [
   { id: "all", label: "All active" },
+  { id: "board-leadership", label: "Board / Leadership" },
+  { id: "funder-portfolio", label: "Funder portfolio" },
   { id: "q2-apps", label: "Q2 applications" },
   { id: "fed-100k", label: "Federal > $100K" },
   { id: "at-risk", label: "At-risk reports" },
@@ -230,13 +308,30 @@ const SAVED_VIEWS = [
   { id: "maria", label: "Maria's load" },
 ]
 
+/** Labels minted by the old ephemeral fork flow — drop from saved pickers (dedupe built-ins). */
+const OPERATOR_EPHEMERAL_WORKING_LABELS = new Set(SAVED_VIEWS.map((v) => `Working · ${v.label}`))
+
+function resolveOperatorViewParam(param: string | null): string {
+  if (param && SAVED_VIEWS.some((v) => v.id === param)) return param
+  return "all"
+}
+
+/** Table header overrides — Template 2 (Board / Leadership) */
+const BOARD_COLUMN_HEADERS: Partial<Record<ColKey, string>> = {
+  grant: "Grant Name",
+  status: "Stage",
+  amountRequested: "Amount Requested",
+  award: "Amount Awarded",
+  notificationDate: "Notification Date",
+}
+
 function applyViewFilters(
   viewId: string,
   prev: Record<string, string | null>,
 ): Record<string, string | null> {
-  if (viewId === "maria") return { ...prev, owner: "maria" }
-  if (viewId === "fed-100k") return { ...prev, funderType: "Federal" }
-  return { funderType: null, owner: null, fiscalYear: null }
+  if (viewId === "maria") return { ...prev, owner: "maria", periodYtd: null }
+  if (viewId === "fed-100k") return { ...prev, funderType: "Federal", periodYtd: null }
+  return { funderType: null, owner: null, fiscalYear: null, periodYtd: null }
 }
 
 type OperatorViewConfig = {
@@ -245,9 +340,19 @@ type OperatorViewConfig = {
   visibleColKeys: ColKey[]
   colOrder: ColKey[]
   filters: Record<string, string | null>
+  /** Present when the saved view lineage is the Funder portfolio lens. */
+  funderPortfolioKpi?: FunderPortfolioKpiState
 }
 
 type OperatorSavedView = { id: string; label: string; config: OperatorViewConfig }
+
+export type AllGrantsFilterApi = {
+  setFilters: (patch: Partial<Record<string, string | null>>) => void
+  saveNamedView: (name: string) => void
+  setGroupBy: (groupBy: GroupBy) => void
+  setSort: (sortKey: ColKey | null, sortDir?: SortDir) => void
+  clearToolbarFilters: () => void
+}
 
 export function AllGrants({
   onOpenGrant,
@@ -255,11 +360,30 @@ export function AllGrants({
   showToolbarNewGrant = true,
   flatChrome = false,
   pageScrollMode = false,
+  pageScrollParent,
   stickyFilterPrefix,
+  /** Rendered below the sticky filter toolbar and above column headers when `pageScrollMode` (e.g. Mixed-alt KPI strip). */
+  pageScrollBetweenFiltersAndTable,
+  /** Mixed-alt: display label for built-in slice `all` (“Pipeline Overview”). */
+  operatorBuiltinAllLabel,
+  kpiBridgeFilter,
+  onFilteredBaseChange,
+  onViewLabelChange,
+  /** AND-filter after built-in view + toolbar filters (Mix Alt agent). */
+  extraGrantFilter,
+  /** Sticky filter band accessory row (e.g. agent chips). */
+  filterToolbarAccessory,
+  onRegisterFilterApi,
+  /** Operator only: notifies parent when built-in view slice changes (e.g. board KPI strip). */
+  onOperatorBuiltinSliceChange,
+  /** Operator only: View dropdown selection (`all` = Pipeline Overview). */
+  onOperatorViewIdChange,
+  /** When incremented (e.g. switching back to All grants tab), snap to built-in `all` (“Where are we?”). */
+  operatorHomeViewResetKey,
 }: {
   onOpenGrant: (id: string) => void
   variant?: "default" | "operator"
-  /** Set false when "New grant" lives in the app header instead. */
+  /** Set false when “New grant” lives in the app header instead. */
   showToolbarNewGrant?: boolean
   /** Operator layout: omit the outer card shadow (e.g. mixed prototype). */
   flatChrome?: boolean
@@ -268,11 +392,40 @@ export function AllGrants({
    * filter row stays outside horizontal table scrolling.
    */
   pageScrollMode?: boolean
+  /** Mixed grants column `overflow-y-auto` element — sticky + intersection observers need this root. */
+  pageScrollParent?: HTMLElement | null
   /** Stuck with filter toolbar + table header (e.g. My work / All grants toggle in mixed prototype). */
   stickyFilterPrefix?: ReactNode
+  /** Rendered below sticky filters, above table header rail (scrolls with page). */
+  pageScrollBetweenFiltersAndTable?: ReactNode
+  /** When set, replaces “All active” for built-in view `all` (operator / mixed-alt). */
+  operatorBuiltinAllLabel?: string
+  /** KPI drill filter applied after View/chip filters (All grants operator bridge — Mixed alt). */
+  kpiBridgeFilter?: ((g: Grant) => boolean) | null
+  onFilteredBaseChange?: (grants: Grant[]) => void
+  onViewLabelChange?: (label: string) => void
+  extraGrantFilter?: ((g: Grant) => boolean) | null
+  filterToolbarAccessory?: ReactNode
+  onRegisterFilterApi?: (api: AllGrantsFilterApi | null) => void
+  onOperatorBuiltinSliceChange?: (sliceId: string) => void
+  onOperatorViewIdChange?: (viewId: string) => void
+  operatorHomeViewResetKey?: number
 }) {
   const [selectedViewId, setSelectedViewId] = useState("all")
   const [customViews, setCustomViews] = useState<OperatorSavedView[]>([])
+
+  useEffect(() => {
+    if (variant !== "operator") return
+    setCustomViews((prev) => prev.filter((v) => !OPERATOR_EPHEMERAL_WORKING_LABELS.has(v.label)))
+  }, [variant])
+
+  useEffect(() => {
+    if (variant !== "operator") return
+    if (!selectedViewId.startsWith("custom-")) return
+    const stillThere = customViews.some((v) => v.id === selectedViewId)
+    if (!stillThere) setSelectedViewId("all")
+  }, [variant, customViews, selectedViewId])
+
   const [saveViewOpen, setSaveViewOpen] = useState(false)
   const [saveViewName, setSaveViewName] = useState("")
   const [groupBy, setGroupBy] = useState<GroupBy>("stage")
@@ -286,18 +439,138 @@ export function AllGrants({
     fiscalYear: null,
     funderType: null,
     owner: null,
+    periodYtd: null,
   })
   const [filterBaseline, setFilterBaseline] = useState<Record<string, string | null>>({
     fiscalYear: null,
     funderType: null,
     owner: null,
+    periodYtd: null,
   })
   const [sortKey, setSortKey] = useState<ColKey | null>(null)
   const [sortDir, setSortDir] = useState<SortDir>("asc")
   const [colOrder, setColOrder] = useState<ColKey[]>(() => [...NON_GRANT_COLUMN_KEYS])
   const [draggingCol, setDraggingCol] = useState<ColKey | null>(null)
+  const [fpKpi, setFpKpi] = useState<FunderPortfolioKpiState>(() => ({ ...DEFAULT_FUNDER_PORTFOLIO_KPI }))
+  const [fpKpiBaseline, setFpKpiBaseline] = useState<FunderPortfolioKpiState>(() => ({ ...DEFAULT_FUNDER_PORTFOLIO_KPI }))
+
+  const builtinSlice = useMemo(() => {
+    if (variant === "operator" && selectedViewId.startsWith("custom-")) {
+      return customViews.find((v) => v.id === selectedViewId)?.config.builtinSlice ?? "all"
+    }
+    return selectedViewId
+  }, [variant, selectedViewId, customViews])
+
+  const boardAudience = variant === "operator" && builtinSlice === "board-leadership"
+  const funderPortfolioLens = variant === "operator" && builtinSlice === "funder-portfolio"
+  const periodLensAudience = boardAudience
+
+  const router = useRouter()
+  const pathname = usePathname()
+  const searchParams = useSearchParams()
+  const portfolioNow = useMemo(() => new Date(), [])
+
+  const applyBoardLeadershipPreset = useCallback(() => {
+    setGroupBy("stage")
+    setSortKey("amountRequested")
+    setSortDir("desc")
+    setVisibleCols(new Set<ColKey>(["grant", ...TABLE_SCROLL_FILL_COL_ORDER]))
+    setColOrder([...TABLE_SCROLL_FILL_COL_ORDER])
+    const nextFilters: Record<string, string | null> = {
+      fiscalYear: null,
+      funderType: null,
+      owner: null,
+      periodYtd: "2026",
+    }
+    setFilters(nextFilters)
+    setFilterBaseline({ ...nextFilters })
+    setFpKpi({ ...DEFAULT_FUNDER_PORTFOLIO_KPI })
+    setFpKpiBaseline({ ...DEFAULT_FUNDER_PORTFOLIO_KPI })
+  }, [])
+
+  const applyFunderPortfolioPreset = useCallback(() => {
+    setGroupBy("funder")
+    setSortKey(null)
+    setSortDir("desc")
+    setFpKpi({ ...DEFAULT_FUNDER_PORTFOLIO_KPI })
+    setFpKpiBaseline({ ...DEFAULT_FUNDER_PORTFOLIO_KPI })
+    setVisibleCols(new Set<ColKey>(["grant", ...FUNDER_PORTFOLIO_TABLE_COL_ORDER]))
+    setColOrder([...FUNDER_PORTFOLIO_TABLE_COL_ORDER])
+    const nextFilters: Record<string, string | null> = {
+      fiscalYear: null,
+      funderType: null,
+      owner: null,
+      periodYtd: null,
+    }
+    setFilters(nextFilters)
+    setFilterBaseline({ ...nextFilters })
+  }, [])
+
+  const resetOperatorTableDefaults = useCallback(() => {
+    setGroupBy("stage")
+    setSortKey(null)
+    setSortDir("asc")
+    setVisibleCols(new Set(COLUMNS.filter((c) => c.defaultVisible).map((c) => c.key)))
+    setColOrder([...NON_GRANT_COLUMN_KEYS])
+    setFpKpi({ ...DEFAULT_FUNDER_PORTFOLIO_KPI })
+    setFpKpiBaseline({ ...DEFAULT_FUNDER_PORTFOLIO_KPI })
+  }, [])
+
   const tableScrollRef = useRef<HTMLDivElement>(null)
+  const tableHeaderHorizRef = useRef<HTMLDivElement>(null)
+  const horizSyncLock = useRef(false)
+  const toggleStickyMeasRef = useRef<HTMLDivElement>(null)
+  const filterStickyMeasRef = useRef<HTMLDivElement>(null)
+  const headerRailWrapRef = useRef<HTMLDivElement>(null)
   const [showPinnedScrollShadow, setShowPinnedScrollShadow] = useState(false)
+  const [sentinelToggleEl, setSentinelToggleEl] = useState<HTMLDivElement | null>(null)
+  const [sentinelFilterEl, setSentinelFilterEl] = useState<HTMLDivElement | null>(null)
+  const [sentinelHeaderEl, setSentinelHeaderEl] = useState<HTMLDivElement | null>(null)
+  const [toggleStickyH, setToggleStickyH] = useState(0)
+  const [filterStickyH, setFilterStickyH] = useState(0)
+  const [headerBandH, setHeaderBandH] = useState(40)
+
+  const dockPins = useScrollDockPins(
+    pageScrollParent ?? null,
+    pageScrollMode,
+    stickyFilterPrefix && pageScrollMode ? sentinelToggleEl : null,
+    pageScrollMode ? sentinelFilterEl : null,
+    pageScrollMode ? sentinelHeaderEl : null,
+  )
+
+  const dockFixedStyles = useMemo(() => {
+    const dock = dockPins.dockRect
+    const pt = dockPins.pinToggle
+    const pf = dockPins.pinFilter
+    const ph = dockPins.pinHeader
+    if (!pageScrollMode || !dock) {
+      return {
+        toggle: undefined as CSSProperties | undefined,
+        filter: undefined as CSSProperties | undefined,
+        header: undefined as CSSProperties | undefined,
+      }
+    }
+    const base = { left: dock.left, width: dock.width }
+    return {
+      toggle: pt ? { position: "fixed" as const, ...base, top: dock.top, zIndex: 60 } : undefined,
+      filter: pf
+        ? {
+            position: "fixed" as const,
+            ...base,
+            top: dock.top + (pt ? toggleStickyH : 0),
+            zIndex: 55,
+          }
+        : undefined,
+      header: ph
+        ? {
+            position: "fixed" as const,
+            ...base,
+            top: dock.top + (pt ? toggleStickyH : 0) + (pf ? filterStickyH : 0),
+            zIndex: 45,
+          }
+        : undefined,
+    }
+  }, [pageScrollMode, dockPins, toggleStickyH, filterStickyH])
 
   const updateTableScrollShadows = useCallback(() => {
     const horiz = tableScrollRef.current
@@ -307,20 +580,38 @@ export function AllGrants({
     setShowPinnedScrollShadow(maxScroll > 1 && scrollLeft > 1)
   }, [])
 
-  useEffect(() => {
-    const onScroll = () => updateTableScrollShadows()
-    const horiz = tableScrollRef.current
-    horiz?.addEventListener("scroll", onScroll, { passive: true })
-    onScroll()
-    return () => horiz?.removeEventListener("scroll", onScroll)
-  }, [pageScrollMode, updateTableScrollShadows])
+  const syncHorizScroll = useCallback((from: "header" | "body") => {
+    const h = tableHeaderHorizRef.current
+    const b = tableScrollRef.current
+    if (!h || !b || horizSyncLock.current) return
+    horizSyncLock.current = true
+    if (from === "header") b.scrollLeft = h.scrollLeft
+    else h.scrollLeft = b.scrollLeft
+    queueMicrotask(() => {
+      horizSyncLock.current = false
+    })
+  }, [])
 
-  const builtinSlice = useMemo(() => {
-    if (variant === "operator" && selectedViewId.startsWith("custom-")) {
-      return customViews.find((v) => v.id === selectedViewId)?.config.builtinSlice ?? "all"
+  const fpAnchorYear = useMemo(() => {
+    const y = filters.periodYtd ? parseInt(filters.periodYtd, 10) : NaN
+    if (Number.isFinite(y)) return y
+    let maxY = 0
+    for (const g of grants) {
+      const yy = parseInt(g.deadline.split("T")[0]?.split("-")[0] ?? "", 10)
+      if (Number.isFinite(yy)) maxY = Math.max(maxY, yy)
     }
-    return selectedViewId
-  }, [variant, selectedViewId, customViews])
+    return maxY || new Date().getFullYear()
+  }, [filters.periodYtd, grants])
+
+  useEffect(() => {
+    if (!onOperatorBuiltinSliceChange || variant !== "operator") return
+    onOperatorBuiltinSliceChange(builtinSlice)
+  }, [variant, builtinSlice, onOperatorBuiltinSliceChange])
+
+  useEffect(() => {
+    if (!onOperatorViewIdChange || variant !== "operator") return
+    onOperatorViewIdChange(selectedViewId)
+  }, [variant, selectedViewId, onOperatorViewIdChange])
 
   const cols = useMemo(() => {
     const grantDef = COLUMNS.find((c) => c.key === "grant")!
@@ -341,11 +632,29 @@ export function AllGrants({
       .map(formatFiscalYearLabel)
   }, [grants])
 
-  const filtered = useMemo(() => {
+  /** Board / Leadership template — calendar years present in seed data (period filter). */
+  const calendarYearOptions = useMemo(() => {
+    const set = new Set<number>()
+    for (const g of grants) {
+      const d = parseGrantDeadline(g.deadline)
+      if (Number.isNaN(d.getTime())) continue
+      set.add(d.getFullYear())
+    }
+    const sorted = Array.from(set).sort((a, b) => b - a)
+    if (sorted.length === 0) return ["2026"]
+    return sorted.map(String)
+  }, [grants])
+
+  const filteredBase = useMemo(() => {
     let list = grants.filter((g) => {
       if (filters.fiscalYear && grantFiscalYearLabel(g.deadline) !== filters.fiscalYear) return false
       if (filters.funderType && g.funderType !== filters.funderType) return false
       if (filters.owner && g.ownerId !== filters.owner) return false
+      if (filters.periodYtd) {
+        const y = parseInt(filters.periodYtd, 10)
+        if (!Number.isFinite(y) || !grantDeadlineInCalendarYear(g.deadline, y)) return false
+      }
+      if (extraGrantFilter && !extraGrantFilter(g)) return false
       return true
     })
 
@@ -379,20 +688,73 @@ export function AllGrants({
     }
 
     return list
-  }, [grants, filters, builtinSlice])
+  }, [grants, filters, builtinSlice, extraGrantFilter])
+
+  const afterBridge = useMemo(() => {
+    if (!kpiBridgeFilter) return filteredBase
+    return filteredBase.filter((g) => kpiBridgeFilter(g))
+  }, [filteredBase, kpiBridgeFilter])
+
+  const fpFiltered = useMemo(() => {
+    if (!funderPortfolioLens) return afterBridge
+    return applyFunderPortfolioKpiFilters(afterBridge, fpKpi, portfolioNow)
+  }, [funderPortfolioLens, afterBridge, fpKpi, portfolioNow])
+
+  useEffect(() => {
+    onFilteredBaseChange?.(filteredBase)
+  }, [filteredBase, onFilteredBaseChange])
+
+  useEffect(() => {
+    if (variant !== "operator" || !onViewLabelChange) return
+    let label = operatorBuiltinAllLabel ?? "All active"
+    const builtin = SAVED_VIEWS.find((v) => v.id === selectedViewId)
+    if (builtin)
+      label =
+        builtin.id === "all" && operatorBuiltinAllLabel ? operatorBuiltinAllLabel : builtin.label
+    else if (selectedViewId.startsWith("custom-")) {
+      label = customViews.find((v) => v.id === selectedViewId)?.label ?? "Saved view"
+    }
+    onViewLabelChange(label)
+  }, [variant, selectedViewId, customViews, onViewLabelChange, operatorBuiltinAllLabel])
 
   const sortedFiltered = useMemo(() => {
-    if (!sortKey) return filtered
-    return [...filtered].sort((a, b) => compareGrantRows(a, b, sortKey, sortDir))
-  }, [filtered, sortKey, sortDir])
+    if (funderPortfolioLens) return fpFiltered
+    if (!sortKey) return afterBridge
+    return [...afterBridge].sort((a, b) => compareGrantRows(a, b, sortKey, sortDir))
+  }, [funderPortfolioLens, fpFiltered, afterBridge, sortKey, sortDir])
+
+  useEffect(() => {
+    const onScroll = () => updateTableScrollShadows()
+    const bodyEl = tableScrollRef.current
+    const headerEl = tableHeaderHorizRef.current
+    bodyEl?.addEventListener("scroll", onScroll, { passive: true })
+    headerEl?.addEventListener("scroll", onScroll, { passive: true })
+    onScroll()
+    return () => {
+      bodyEl?.removeEventListener("scroll", onScroll)
+      headerEl?.removeEventListener("scroll", onScroll)
+    }
+  }, [pageScrollMode, updateTableScrollShadows, sortedFiltered])
 
   const filtersDirty = useMemo(() => {
     return (
       filters.fiscalYear !== filterBaseline.fiscalYear ||
       filters.funderType !== filterBaseline.funderType ||
-      filters.owner !== filterBaseline.owner
+      filters.owner !== filterBaseline.owner ||
+      (filters.periodYtd ?? null) !== (filterBaseline.periodYtd ?? null)
     )
   }, [filters, filterBaseline])
+
+  const fpKpiDirty = useMemo(() => {
+    if (!funderPortfolioLens) return false
+    return (
+      fpKpi.funderType !== fpKpiBaseline.funderType ||
+      fpKpi.topFundersOnly !== fpKpiBaseline.topFundersOnly ||
+      fpKpi.multiYearOnly !== fpKpiBaseline.multiYearOnly
+    )
+  }, [funderPortfolioLens, fpKpi, fpKpiBaseline])
+
+  const showSaveViewChip = variant === "operator" && (filtersDirty || fpKpiDirty)
 
   const grouped = useMemo(() => {
     if (groupBy === "none") return [{ key: "All grants", items: sortedFiltered }]
@@ -406,11 +768,23 @@ export function AllGrants({
       else if (groupBy === "owner") key = team.find((t) => t.id === g.ownerId)?.name || "Unassigned"
       else if (groupBy === "funderType") key = g.funderType
       else if (groupBy === "projectGroup") key = g.projectGroup
+      else if (groupBy === "funder") key = g.funder.trim() || "(Unknown funder)"
       else if (groupBy === "deadline") key = deadlineMonthKey(g.deadline)
       if (!map.has(key)) map.set(key, [])
       map.get(key)!.push(g)
     }
     let entries = Array.from(map.entries()).filter(([, items]) => items.length > 0)
+    if (groupBy === "funder") {
+      entries.sort(([, ga], [, gb]) => {
+        const sa = ga.reduce((s, x) => s + awardedSumGrant(x), 0)
+        const sb = gb.reduce((s, x) => s + awardedSumGrant(x), 0)
+        return sb - sa
+      })
+      entries = entries.map(([key, items]) => [
+        key,
+        [...items].sort((a, b) => awardedSumGrant(b) - awardedSumGrant(a)),
+      ]) as [string, Grant[]][]
+    }
     if (groupBy === "deadline") {
       entries = [...entries].sort(([a], [b]) => {
         if (a === "unknown") return 1
@@ -433,7 +807,90 @@ export function AllGrants({
     return () => ro.disconnect()
   }, [updateTableScrollShadows, sortedFiltered, cols])
 
+  const applyOperatorViewConfig = useCallback((c: OperatorViewConfig) => {
+    setGroupBy(c.groupBy)
+    setVisibleCols(new Set(c.visibleColKeys))
+    setColOrder(c.colOrder)
+    const fpNext = c.funderPortfolioKpi ?? { ...DEFAULT_FUNDER_PORTFOLIO_KPI }
+    setFpKpi(fpNext)
+    setFpKpiBaseline({ ...fpNext })
+    setFilters((prev) => {
+      const next = { ...prev, ...c.filters }
+      setFilterBaseline({ ...next })
+      return next
+    })
+  }, [])
+
+  const activateOperatorViewFromMenu = useCallback(
+    (id: string) => {
+      setSelectedViewId(id)
+      if (variant !== "operator") return
+      if (id.startsWith("custom-")) {
+        const cv = customViews.find((v) => v.id === id)
+        if (cv) applyOperatorViewConfig(cv.config)
+        return
+      }
+      if (id === "board-leadership") {
+        applyBoardLeadershipPreset()
+        return
+      }
+      if (id === "funder-portfolio") {
+        applyFunderPortfolioPreset()
+        return
+      }
+      resetOperatorTableDefaults()
+      setFilters((prev) => {
+        const next = applyViewFilters(id, prev)
+        setFilterBaseline({ ...next })
+        return next
+      })
+    },
+    [variant, customViews, applyBoardLeadershipPreset, applyFunderPortfolioPreset, resetOperatorTableDefaults, applyOperatorViewConfig],
+  )
+
+  const forkIfCannedOperatorEdit = useCallback(() => {
+    if (variant !== "operator") return
+    // Avoid minting ephemeral "Working · …" rows — those duplicated built-ins (All active, Funder portfolio, etc.).
+  }, [variant])
+
+  const operatorUrlHydratedRef = useRef(false)
+  useLayoutEffect(() => {
+    if (variant !== "operator" || !pageScrollMode || operatorUrlHydratedRef.current) return
+    const raw = searchParams.get("view")
+    if (raw === null) {
+      operatorUrlHydratedRef.current = true
+      return
+    }
+    operatorUrlHydratedRef.current = true
+    const v = resolveOperatorViewParam(raw)
+    activateOperatorViewFromMenu(v)
+  }, [variant, pageScrollMode, searchParams, activateOperatorViewFromMenu])
+
+  const prevOperatorHomeResetKeyRef = useRef<number | undefined>(undefined)
+  useLayoutEffect(() => {
+    if (variant !== "operator") return
+    if (operatorHomeViewResetKey === undefined) return
+    if (prevOperatorHomeResetKeyRef.current === operatorHomeViewResetKey) return
+    prevOperatorHomeResetKeyRef.current = operatorHomeViewResetKey
+    activateOperatorViewFromMenu("all")
+  }, [variant, operatorHomeViewResetKey, activateOperatorViewFromMenu])
+
+  useEffect(() => {
+    if (variant !== "operator" || !pageScrollMode) return
+    const params = new URLSearchParams(searchParams.toString())
+    if (params.get("view") === selectedViewId) return
+    params.set("view", selectedViewId)
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false })
+  }, [variant, pageScrollMode, selectedViewId, pathname, router, searchParams])
+
+  const footerGrantScope = useMemo(
+    () => (funderPortfolioLens ? fpFiltered : afterBridge),
+    [funderPortfolioLens, fpFiltered, afterBridge],
+  )
+
   function handleSortColumn(key: ColKey) {
+    if (funderPortfolioLens) return
+    forkIfCannedOperatorEdit()
     if (sortKey !== key) {
       setSortKey(key)
       setSortDir("asc")
@@ -466,6 +923,7 @@ export function AllGrants({
   }
 
   function toggleColumn(key: ColKey) {
+    forkIfCannedOperatorEdit()
     const def = COLUMNS.find((c) => c.key === key)
     setVisibleCols((prev) => {
       const next = new Set(prev)
@@ -480,38 +938,160 @@ export function AllGrants({
   }
 
   function handleReorderColumns(from: ColKey, to: ColKey) {
+    forkIfCannedOperatorEdit()
     setColOrder((order) => reorderColumns(order, from, to))
   }
 
-  function applyOperatorViewConfig(c: OperatorViewConfig) {
-    setGroupBy(c.groupBy)
-    setVisibleCols(new Set(c.visibleColKeys))
-    setColOrder(c.colOrder)
-    setFilters(c.filters)
-    setFilterBaseline({ ...c.filters })
-  }
+  const commitSavedView = useCallback(
+    (name: string) => {
+      const trimmed = name.trim()
+      if (!trimmed) return
+      const baseSlice = selectedViewId.startsWith("custom-")
+        ? (customViews.find((v) => v.id === selectedViewId)?.config.builtinSlice ?? "all")
+        : selectedViewId
+      const id = `custom-${Date.now()}`
+      const config: OperatorViewConfig = {
+        builtinSlice: baseSlice,
+        groupBy,
+        visibleColKeys: Array.from(visibleCols),
+        colOrder: [...colOrder],
+        filters: { ...filters },
+        funderPortfolioKpi: baseSlice === "funder-portfolio" ? { ...fpKpi } : undefined,
+      }
+      setCustomViews((prev) => [...prev, { id, label: trimmed, config }])
+      setSelectedViewId(id)
+      setFilterBaseline({ ...config.filters })
+      setFpKpiBaseline({ ...fpKpi })
+      toast("View saved", { description: `“${trimmed}” is in the View menu.` })
+    },
+    [selectedViewId, customViews, groupBy, visibleCols, colOrder, filters, fpKpi],
+  )
+
+  useEffect(() => {
+    if (!onRegisterFilterApi) return
+    const api: AllGrantsFilterApi = {
+      setFilters: (patch) => {
+        forkIfCannedOperatorEdit()
+        setFilters((prev) => {
+          const next: Record<string, string | null> = { ...prev }
+          for (const [k, v] of Object.entries(patch)) {
+            if (v !== undefined) next[k] = v
+          }
+          return next
+        })
+      },
+      saveNamedView: (name) => commitSavedView(name),
+      setGroupBy: (gb) => {
+        forkIfCannedOperatorEdit()
+        setGroupBy(gb)
+      },
+      setSort: (key, dir) => {
+        forkIfCannedOperatorEdit()
+        setSortKey(key)
+        if (dir) setSortDir(dir)
+      },
+      clearToolbarFilters: () => {
+        forkIfCannedOperatorEdit()
+        setFilters((prev) => ({
+          ...prev,
+          fiscalYear: null,
+          funderType: null,
+          owner: null,
+          periodYtd: null,
+        }))
+      },
+    }
+    onRegisterFilterApi(api)
+    return () => onRegisterFilterApi(null)
+  }, [onRegisterFilterApi, commitSavedView, forkIfCannedOperatorEdit])
 
   function handleSaveCustomView() {
-    const name = saveViewName.trim()
-    if (!name) return
-    const baseSlice = selectedViewId.startsWith("custom-")
-      ? (customViews.find((v) => v.id === selectedViewId)?.config.builtinSlice ?? "all")
-      : selectedViewId
-    const id = `custom-${Date.now()}`
-    const config: OperatorViewConfig = {
-      builtinSlice: baseSlice,
-      groupBy,
-      visibleColKeys: Array.from(visibleCols),
-      colOrder: [...colOrder],
-      filters: { ...filters },
-    }
-    setCustomViews((prev) => [...prev, { id, label: name, config }])
-    setSelectedViewId(id)
-    setFilterBaseline({ ...config.filters })
+    commitSavedView(saveViewName)
     setSaveViewOpen(false)
     setSaveViewName("")
-    toast("View saved", { description: `“${name}” is in the View menu.` })
   }
+
+  const funderPortfolioKpiInner =
+    variant === "operator" && funderPortfolioLens ? (
+      <>
+        <PulseStripFunderPortfolio
+          grantsScoped={filteredBase}
+          grantsFull={grantsData}
+          anchorYear={fpAnchorYear}
+          kpi={fpKpi}
+          onKpiChange={(next) => {
+            forkIfCannedOperatorEdit()
+            setFpKpi(next)
+          }}
+        />
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          {fpKpi.funderType ? (
+            <span className="inline-flex max-w-full items-center gap-1 rounded-full border border-border bg-muted/45 px-2 py-0.5 text-[11px] text-foreground">
+              <span className="min-w-0 truncate">Funder type: {fpKpi.funderType}</span>
+              <button
+                type="button"
+                className="shrink-0 rounded-full p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                aria-label="Clear funder type drill"
+                onClick={() => {
+                  forkIfCannedOperatorEdit()
+                  setFpKpi((p) => ({ ...p, funderType: null }))
+                }}
+              >
+                <X className="h-3 w-3" aria-hidden />
+              </button>
+            </span>
+          ) : null}
+          {fpKpi.topFundersOnly ? (
+            <span className="inline-flex max-w-full items-center gap-1 rounded-full border border-border bg-muted/45 px-2 py-0.5 text-[11px] text-foreground">
+              <span className="min-w-0 truncate">Top 5 funders</span>
+              <button
+                type="button"
+                className="shrink-0 rounded-full p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                aria-label="Clear top funders drill"
+                onClick={() => {
+                  forkIfCannedOperatorEdit()
+                  setFpKpi((p) => ({ ...p, topFundersOnly: false }))
+                }}
+              >
+                <X className="h-3 w-3" aria-hidden />
+              </button>
+            </span>
+          ) : null}
+          {fpKpi.multiYearOnly ? (
+            <span className="inline-flex max-w-full items-center gap-1 rounded-full border border-border bg-muted/45 px-2 py-0.5 text-[11px] text-foreground">
+              <span className="min-w-0 truncate">Multi-year relationship</span>
+              <button
+                type="button"
+                className="shrink-0 rounded-full p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                aria-label="Clear multi-year drill"
+                onClick={() => {
+                  forkIfCannedOperatorEdit()
+                  setFpKpi((p) => ({ ...p, multiYearOnly: false }))
+                }}
+              >
+                <X className="h-3 w-3" aria-hidden />
+              </button>
+            </span>
+          ) : null}
+        </div>
+      </>
+    ) : null
+
+  /** Page scroll (Mixed-alt): same slot as Board / Bridge KPI strips — scrolls with the column. */
+  const funderPortfolioKpiPageBetween =
+    funderPortfolioKpiInner && pageScrollMode ? (
+      <div className="w-full shrink-0 self-stretch border-b border-border/40 px-2 pb-3 pt-5 sm:px-4 sm:pb-4 sm:pt-6">
+        <div className="min-w-0 space-y-2">{funderPortfolioKpiInner}</div>
+      </div>
+    ) : null
+
+  /** Non-page-scroll operator layout: KPI sits above the table scrollport. */
+  const funderPortfolioKpiBelowToolbar =
+    funderPortfolioKpiInner && !pageScrollMode ? (
+      <div className="min-w-0 shrink-0 space-y-2 border-b border-border/40 px-2 pb-3 pt-2 sm:px-4">
+        {funderPortfolioKpiInner}
+      </div>
+    ) : null
 
   const filterToolbarInner = (
     <>
@@ -519,27 +1099,20 @@ export function AllGrants({
         <span className="shrink-0 text-[11px] font-medium text-muted-foreground">View</span>
         <Select
           value={selectedViewId}
-          onValueChange={(id) => {
-            setSelectedViewId(id)
-            if (variant === "operator" && id.startsWith("custom-")) {
-              const cv = customViews.find((v) => v.id === id)
-              if (cv) applyOperatorViewConfig(cv.config)
-            } else {
-              setFilters((prev) => {
-                const next = applyViewFilters(id, prev)
-                setFilterBaseline({ ...next })
-                return next
-              })
-            }
-          }}
+          onValueChange={(id) => activateOperatorViewFromMenu(id)}
         >
           <SelectTrigger size="sm" className="h-7 w-[min(100%,11rem)] text-xs shadow-xs">
             <SelectValue placeholder="Select view" />
           </SelectTrigger>
           <SelectContent>
-            {SAVED_VIEWS.map((v) => (
+            {SAVED_VIEWS.filter(
+              (v) =>
+                variant === "operator" || (v.id !== "board-leadership" && v.id !== "funder-portfolio"),
+            ).map((v) => (
               <SelectItem key={v.id} value={v.id} className="text-xs">
-                {v.label}
+                {variant === "operator" && operatorBuiltinAllLabel && v.id === "all"
+                  ? operatorBuiltinAllLabel
+                  : v.label}
               </SelectItem>
             ))}
             {variant === "operator" &&
@@ -550,7 +1123,7 @@ export function AllGrants({
               ))}
           </SelectContent>
         </Select>
-        {variant === "operator" && filtersDirty && (
+        {showSaveViewChip && (
           <button
             type="button"
             onClick={() => {
@@ -567,23 +1140,41 @@ export function AllGrants({
 
         <div className="mx-1 hidden h-5 w-px shrink-0 bg-border sm:block" aria-hidden />
 
-        <FilterChip
-          label="Fiscal year"
-          value={filters.fiscalYear}
-          options={fiscalYearOptions}
-          onChange={(v) => setFilters({ ...filters, fiscalYear: v })}
-        />
+        {periodLensAudience ? (
+          <BoardPeriodFilterChip
+            year={filters.periodYtd}
+            options={calendarYearOptions}
+            onChange={(y) => {
+              forkIfCannedOperatorEdit()
+              setFilters({ ...filters, periodYtd: y })
+            }}
+          />
+        ) : (
+          <FilterChip
+            label="Fiscal year"
+            value={filters.fiscalYear}
+            options={fiscalYearOptions}
+            onChange={(v) => {
+              forkIfCannedOperatorEdit()
+              setFilters({ ...filters, fiscalYear: v })
+            }}
+          />
+        )}
         <FilterChip
           label="Funder type"
           value={filters.funderType}
           options={["Federal", "Private", "Corporate", "State", "Local"]}
-          onChange={(v) => setFilters({ ...filters, funderType: v })}
+          onChange={(v) => {
+            forkIfCannedOperatorEdit()
+            setFilters({ ...filters, funderType: v })
+          }}
         />
         <FilterChip
           label="Owner"
           value={filters.owner ? team.find((t) => t.id === filters.owner)?.name || filters.owner : null}
           options={team.map((t) => t.name)}
           onChange={(v) => {
+            forkIfCannedOperatorEdit()
             const member = team.find((t) => t.name === v)
             setFilters({ ...filters, owner: member?.id ?? null })
           }}
@@ -598,10 +1189,35 @@ export function AllGrants({
 
         <div className="mx-1 h-5 w-px shrink-0 bg-border" aria-hidden />
 
-        <GroupByPicker value={groupBy} onChange={setGroupBy} />
+        <GroupByPicker
+          value={groupBy}
+          onChange={(v) => {
+            forkIfCannedOperatorEdit()
+            setGroupBy(v)
+          }}
+        />
       </div>
 
       <div className="ml-auto flex shrink-0 flex-nowrap items-center justify-end gap-2">
+        {boardAudience || funderPortfolioLens ? (
+          <Button
+            type="button"
+            variant="default"
+            size="sm"
+            className="h-7 shrink-0 gap-1 px-2.5 text-[11px] font-medium shadow-xs"
+            onClick={() =>
+              toast.success("Export queued", {
+                description:
+                  boardAudience
+                    ? `Board / Leadership · ${filters.periodYtd ?? "All periods"} · PDF`
+                    : `Funder portfolio · ${filters.periodYtd ? `YTD ${filters.periodYtd}` : "All time"} · PDF`,
+              })
+            }
+          >
+            <Download className="h-3 w-3 shrink-0" aria-hidden />
+            Export
+          </Button>
+        ) : null}
         <ColumnPicker visible={visibleCols} onToggle={toggleColumn} />
         {showToolbarNewGrant ? (
           <button
@@ -640,21 +1256,84 @@ export function AllGrants({
       </div>
     ) : null
 
-  const columnHeaderRow = () => (
+  useLayoutEffect(() => {
+    if (!pageScrollMode || !stickyFilterPrefix) {
+      setToggleStickyH(0)
+      return
+    }
+    const el = toggleStickyMeasRef.current
+    if (!el) return
+    const ro = new ResizeObserver(() => setToggleStickyH(el.getBoundingClientRect().height))
+    ro.observe(el)
+    setToggleStickyH(el.getBoundingClientRect().height)
+    return () => ro.disconnect()
+  }, [pageScrollMode, stickyFilterPrefix, selected.size])
+
+  useLayoutEffect(() => {
+    if (!pageScrollMode) {
+      setFilterStickyH(0)
+      return
+    }
+    const el = filterStickyMeasRef.current
+    if (!el) return
+    const ro = new ResizeObserver(() => setFilterStickyH(el.getBoundingClientRect().height))
+    ro.observe(el)
+    setFilterStickyH(el.getBoundingClientRect().height)
+    return () => ro.disconnect()
+  }, [pageScrollMode, selected.size, funderPortfolioLens])
+
+  useLayoutEffect(() => {
+    if (!pageScrollMode) {
+      setHeaderBandH(40)
+      return
+    }
+    const el = headerRailWrapRef.current
+    if (!el) return
+    const ro = new ResizeObserver(() => setHeaderBandH(Math.max(36, Math.ceil(el.getBoundingClientRect().height))))
+    ro.observe(el)
+    setHeaderBandH(Math.max(36, Math.ceil(el.getBoundingClientRect().height)))
+    return () => ro.disconnect()
+  }, [pageScrollMode, cols, gridTemplate, sortedFiltered.length, dockPins.pinHeader, funderPortfolioLens])
+
+  const columnHeaderRow = (pageStickyBands?: { topPx?: number; stuck: boolean; railMount?: boolean }) => {
+    return (
     <div
       className={cn(
-        "z-40 grid w-max items-stretch border-b border-border",
-        variant === "operator" && "border-t-0",
-        variant === "operator" ? "bg-transparent dark:bg-card/40" : "bg-muted",
+        "grid w-max items-stretch",
+        pageStickyBands
+          ?         pageStickyBands.railMount
+            ? cn(
+                "min-w-full w-max shrink-0 self-start border-b-0",
+                variant === "operator" && "border-t-0 bg-transparent dark:bg-transparent",
+              )
+            : cn(
+                "sticky z-[45] min-w-full w-max shrink-0 self-start transition-[background-color,border-color]",
+                pageStickyBands.stuck
+                  ? "border-b border-border bg-background/95 backdrop-blur-sm dark:bg-background/95"
+                  : "border-b border-transparent bg-transparent dark:bg-transparent",
+              )
+          : cn(
+              "z-40 border-b border-border",
+              variant === "operator" && "border-t-0",
+              variant === "operator" ? "bg-transparent dark:bg-card/40" : "bg-muted",
+            ),
       )}
-      style={{ gridTemplateColumns: `40px ${gridTemplate}` }}
+      style={{
+        gridTemplateColumns: `40px ${gridTemplate}`,
+        ...(pageStickyBands && !pageStickyBands.railMount ? { top: pageStickyBands.topPx } : {}),
+      }}
     >
       <div
         className={cn(
           "sticky left-0 flex min-h-[36px] items-center px-3",
           variant === "operator"
             ? cn(
-                "border-r-0 bg-transparent dark:bg-card/40",
+                "border-r-0",
+                pageStickyBands
+                  ? pageStickyBands.stuck
+                    ? "bg-background/95 dark:bg-background/95"
+                    : "bg-background dark:bg-background"
+                  : "bg-background dark:bg-background",
                 showPinnedScrollShadow
                   ? "z-[33] shadow-[3px_0_10px_-2px_rgba(0,0,0,0.07)] dark:shadow-[3px_0_10px_-2px_rgba(0,0,0,0.2)]"
                   : "z-[32] shadow-none",
@@ -674,6 +1353,7 @@ export function AllGrants({
         <SortableColumnHeader
           key={c.key}
           col={c}
+          headerLabel={boardAudience ? BOARD_COLUMN_HEADERS[c.key] : undefined}
           sortKey={sortKey}
           sortDir={sortDir}
           onSort={handleSortColumn}
@@ -682,10 +1362,15 @@ export function AllGrants({
           onDraggingChange={setDraggingCol}
           variant={variant}
           showPinnedScrollShadow={variant === "operator" && showPinnedScrollShadow}
+          pinnedTone={
+            pageStickyBands ? (pageStickyBands.stuck ? "solid" : "clear") : "default"
+          }
+          funderPortfolioLens={funderPortfolioLens}
         />
       ))}
     </div>
-  )
+    )
+  }
 
   const grantsTableBodyContent = (
     <>
@@ -693,39 +1378,51 @@ export function AllGrants({
         const collapsed = collapsedGroups.has(group.key)
         const sumAward = group.items.reduce((s, g) => s + g.award, 0)
         const sumWeighted = group.items.reduce((s, g) => s + (g.weighted ?? 0), 0)
+        const sumPortfolioAwarded = group.items.reduce((s, g) => s + awardedSumGrant(g), 0)
         return (
           <div key={group.key}>
-            {groupBy !== "none" && (
-              <button
-                type="button"
-                onClick={() => toggleGroup(group.key)}
-                className="group/grprow z-30 flex w-max min-w-full flex-nowrap items-center gap-2 border-b border-border bg-zinc-50 px-0 py-0 text-left hover:bg-zinc-100 dark:bg-zinc-900/30 dark:hover:bg-zinc-900/45"
-              >
-                <span className="sticky left-[40px] z-[25] ml-[40px] flex shrink-0 items-center gap-2 bg-zinc-50 px-3 py-1.5 group-hover/grprow:bg-zinc-100 dark:bg-zinc-900/30 dark:group-hover/grprow:bg-zinc-900/45">
-                  {collapsed ? (
-                    <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                  ) : (
-                    <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                  )}
-                  {groupBy === "stage" && <StagePill stage={group.key as Stage} />}
-                  {groupBy === "deadline" && (
-                    <span className="text-xs font-semibold text-foreground">
-                      {formatDeadlineMonthGroupLabel(group.key)}
+            {groupBy !== "none" &&
+              (funderPortfolioLens && groupBy === "funder" ? (
+                <FunderPortfolioGroupHeader
+                  groupKey={group.key}
+                  items={group.items}
+                  collapsed={collapsed}
+                  onToggle={() => toggleGroup(group.key)}
+                  sumAward={sumAward}
+                  sumPortfolioAwarded={sumPortfolioAwarded}
+                  sumWeighted={sumWeighted}
+                />
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => toggleGroup(group.key)}
+                  className="group/grprow z-30 flex w-max min-w-full flex-nowrap items-center gap-2 border-b border-border bg-zinc-50 px-0 py-0 text-left hover:bg-zinc-100 dark:bg-zinc-900/30 dark:hover:bg-zinc-900/45"
+                >
+                  <span className="sticky left-[40px] z-[25] ml-[40px] flex shrink-0 items-center gap-2 bg-zinc-50 px-3 py-1.5 group-hover/grprow:bg-zinc-100 dark:bg-zinc-900/30 dark:group-hover/grprow:bg-zinc-900/45">
+                    {collapsed ? (
+                      <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                    ) : (
+                      <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                    )}
+                    {groupBy === "stage" && <StagePill stage={group.key as Stage} audience={boardAudience ? "board" : "internal"} />}
+                    {groupBy === "deadline" && (
+                      <span className="text-xs font-semibold text-foreground">
+                        {formatDeadlineMonthGroupLabel(group.key)}
+                      </span>
+                    )}
+                    {groupBy !== "stage" && groupBy !== "deadline" && (
+                      <span className="text-xs font-semibold text-foreground">{group.key}</span>
+                    )}
+                    <span className="text-[11px] text-muted-foreground">
+                      {group.items.length} {group.items.length === 1 ? "grant" : "grants"}
                     </span>
-                  )}
-                  {groupBy !== "stage" && groupBy !== "deadline" && (
-                    <span className="text-xs font-semibold text-foreground">{group.key}</span>
-                  )}
-                  <span className="text-[11px] text-muted-foreground">
-                    {group.items.length} {group.items.length === 1 ? "grant" : "grants"}
                   </span>
-                </span>
-                <span className="ml-auto flex shrink-0 items-center gap-3 px-3 py-1.5 text-[11px] tabular-nums text-muted-foreground">
-                  <span>${(sumAward / 1000).toFixed(0)}K unweighted</span>
-                  {sumWeighted > 0 && <span>${(sumWeighted / 1000).toFixed(0)}K weighted</span>}
-                </span>
-              </button>
-            )}
+                  <span className="ml-auto flex shrink-0 items-center gap-3 px-3 py-1.5 text-[11px] tabular-nums text-muted-foreground">
+                    <span>${(sumAward / 1000).toFixed(0)}K unweighted</span>
+                    {sumWeighted > 0 && <span>${(sumWeighted / 1000).toFixed(0)}K weighted</span>}
+                  </span>
+                </button>
+              ))}
             {!collapsed &&
               group.items.map((grant) => (
                 <GrantRow
@@ -738,6 +1435,7 @@ export function AllGrants({
                   onOpen={() => onOpenGrant(grant.id)}
                   onUpdate={updateGrant}
                   variant={variant}
+                  boardAudience={boardAudience}
                   showPinnedScrollShadow={variant === "operator" && showPinnedScrollShadow}
                 />
               ))}
@@ -745,7 +1443,7 @@ export function AllGrants({
         )
       })}
 
-      {filtered.length === 0 && (
+      {sortedFiltered.length === 0 && (
         <div className="flex min-w-full flex-col items-center justify-center gap-2 py-16 text-center">
           <div className="flex h-10 w-10 items-center justify-center rounded-full bg-muted">
             <Inbox className="h-4 w-4 text-muted-foreground" />
@@ -758,16 +1456,19 @@ export function AllGrants({
   )
 
   return (
-    <div className={cn("flex min-h-0 min-w-0 flex-col flex-1")}>
+    <div
+      className={cn(
+        pageScrollMode ? "flex min-w-0 w-full flex-col" : "flex min-h-0 min-w-0 shrink-0 flex-col flex-1",
+      )}
+    >
       <div
         className={cn(
-          "flex min-h-0 min-w-0 flex-col",
-          pageScrollMode ? "flex-1 min-h-0" : "flex-1",
+          pageScrollMode ? "flex min-w-0 w-full flex-col" : "flex min-h-0 min-w-0 shrink-0 flex-col flex-1",
           variant === "operator" &&
             cn(
-              "rounded-[12px] bg-transparent dark:bg-card/40",
+              !pageScrollMode && "rounded-[12px] bg-transparent dark:bg-card/40",
               !pageScrollMode && "overflow-hidden",
-              !flatChrome && "border border-elevated-stroke shadow-sm",
+              !flatChrome && !pageScrollMode && "border border-elevated-stroke shadow-sm",
             ),
         )}
       >
@@ -785,51 +1486,113 @@ export function AllGrants({
             {filterToolbarInner}
           </div>
           {bulkBar}
+          {funderPortfolioKpiBelowToolbar}
         </>
       )}
 
       {/* Scrollport: page scroll ancestor when pageScrollMode; horizontal scroll only on table */}
-      <div
-        className={cn(
-          "relative min-w-0",
-          pageScrollMode ? "flex min-h-0 w-full min-w-0 flex-1 flex-col" : "min-h-0 flex-1",
-        )}
-      >
+      <div className={cn("min-w-0", pageScrollMode ? "flex w-full flex-col" : "relative min-h-0 flex-1")}>
         {pageScrollMode ? (
           <>
-            <div className="flex w-full min-w-0 flex-col bg-transparent dark:bg-card/40">
+            <div className="flex min-w-0 w-full shrink-0 flex-col self-start bg-transparent">
               {stickyFilterPrefix ? (
-                <div className="border-b border-border/50 bg-transparent px-3 py-2.5 dark:bg-card/40">
-                  {stickyFilterPrefix}
-                </div>
+                <>
+                  <div
+                    ref={setSentinelToggleEl}
+                    className="pointer-events-none h-px max-w-none min-w-full shrink-0 self-start"
+                    aria-hidden
+                  />
+                  {dockPins.pinToggle && toggleStickyH > 0 ? (
+                    <div style={{ height: toggleStickyH }} className="shrink-0" aria-hidden />
+                  ) : null}
+                  <div
+                    ref={toggleStickyMeasRef}
+                    className={cn(
+                      "shrink-0 self-start px-3 py-2.5 min-w-full transition-[background-color,backdrop-filter,border-color]",
+                      dockPins.pinToggle
+                        ? "border-b border-border/60 bg-background/95 backdrop-blur-sm dark:bg-background/95"
+                        : "border-b border-transparent bg-transparent dark:bg-transparent",
+                    )}
+                    style={dockFixedStyles.toggle}
+                  >
+                    {stickyFilterPrefix}
+                  </div>
+                </>
               ) : null}
               <div
+                ref={setSentinelFilterEl}
+                className="pointer-events-none h-px max-w-none min-w-full shrink-0 self-start"
+                aria-hidden
+              />
+              {dockPins.pinFilter && filterStickyH > 0 ? (
+                <div style={{ height: filterStickyH }} className="shrink-0" aria-hidden />
+              ) : null}
+              <div
+                ref={filterStickyMeasRef}
                 className={cn(
-                  "flex w-full min-w-0 flex-nowrap items-center gap-x-2 overflow-x-auto overflow-y-hidden py-2 scrollbar-thin",
-                  "border-b border-border/50",
-                  variant === "operator"
-                    ? "bg-transparent px-3 dark:bg-card/40"
-                    : "bg-background px-6",
+                  "min-w-full shrink-0 self-start transition-[background-color,backdrop-filter,border-color]",
+                  dockPins.pinFilter
+                    ? "border-b border-border/60 bg-background/95 backdrop-blur-sm dark:bg-background/95"
+                    : "border-b border-transparent bg-transparent dark:bg-transparent",
                 )}
+                style={dockFixedStyles.filter}
               >
-                {filterToolbarInner}
+                <div className="flex min-w-0 w-full flex-col gap-1">
+                  <div
+                    className={cn(
+                      "flex w-full min-w-0 flex-nowrap items-center gap-x-2 overflow-x-auto overflow-y-hidden py-2 scrollbar-thin",
+                      variant === "operator" ? "px-3" : "border-b border-border bg-background px-6",
+                    )}
+                  >
+                  {filterToolbarInner}
+                </div>
+                {filterToolbarAccessory ? (
+                  <div className="min-w-0 shrink-0 px-3 pb-1">{filterToolbarAccessory}</div>
+                ) : null}
+                {bulkBar}
+                </div>
               </div>
-              {bulkBar}
+            </div>
+            {funderPortfolioKpiPageBetween}
+            {pageScrollBetweenFiltersAndTable ? (
+              <div className="w-full shrink-0 self-start">{pageScrollBetweenFiltersAndTable}</div>
+            ) : null}
+            <div ref={setSentinelHeaderEl} className="pointer-events-none h-px w-full shrink-0" aria-hidden />
+            {dockPins.pinHeader && headerBandH > 0 ? (
+              <div style={{ height: headerBandH }} className="shrink-0" aria-hidden />
+            ) : null}
+            <div
+              ref={headerRailWrapRef}
+              className={cn(
+                "w-full min-w-0 shrink-0 self-start border-b border-border/60 transition-[background-color,backdrop-filter]",
+                dockPins.pinHeader
+                  ? "bg-background/95 backdrop-blur-sm dark:bg-background/95"
+                  : "bg-transparent dark:bg-transparent",
+              )}
+              style={dockFixedStyles.header}
+            >
+              <div
+                ref={tableHeaderHorizRef}
+                onScroll={() => syncHorizScroll("header")}
+                className="shadow-bleed-scroll box-border min-w-0 w-full overflow-x-auto overscroll-x-contain"
+              >
+                <div className="flex min-w-full w-max flex-col">
+                  {columnHeaderRow({ stuck: dockPins.pinHeader, railMount: true })}
+                </div>
+              </div>
             </div>
             <div
               ref={tableScrollRef}
-              className="min-h-0 w-full min-w-0 flex-1 overflow-x-auto overscroll-x-contain"
+              onScroll={() => syncHorizScroll("body")}
+              className="shadow-bleed-scroll box-border min-w-0 w-full max-w-none shrink-0 self-start overflow-x-auto overscroll-x-contain"
             >
-              <div className="flex w-max min-w-full flex-col">
-                {columnHeaderRow()}
-                {grantsTableBodyContent}
-              </div>
+              <div className="flex min-w-full w-max flex-col">{grantsTableBodyContent}</div>
             </div>
           </>
         ) : (
           <div
             ref={tableScrollRef}
-            className="h-full min-h-0 min-w-0 w-full overflow-auto overscroll-contain"
+            className={cn("shadow-bleed-scroll h-full min-h-0 min-w-0 w-full overflow-auto overscroll-contain")}
           >
             <div className="flex w-max flex-col">
               {columnHeaderRow()}
@@ -849,17 +1612,18 @@ export function AllGrants({
       <div
         className={cn(
           "flex items-center justify-between border-t border-border px-6 py-2 text-[11px] text-muted-foreground",
+          pageScrollMode && "w-full min-w-0 shrink-0 self-stretch border-t-0",
           variant === "operator" ? "bg-transparent dark:bg-card/40" : "bg-background",
         )}
       >
         <span className="tabular-nums">
-          Showing {filtered.length} of {grants.length} grants
+          Showing {sortedFiltered.length} of {grants.length} grants
         </span>
         <span className="tabular-nums">
           $
-          {(filtered.reduce((s, g) => s + g.award, 0) / 1_000_000).toFixed(2)}M unweighted ·{" "}
+          {(sortedFiltered.reduce((s: number, g: Grant) => s + g.award, 0) / 1_000_000).toFixed(2)}M unweighted ·{" "}
           $
-          {(filtered.reduce((s, g) => s + (g.weighted ?? 0), 0) / 1_000_000).toFixed(2)}M weighted
+          {(sortedFiltered.reduce((s: number, g: Grant) => s + (g.weighted ?? 0), 0) / 1_000_000).toFixed(2)}M weighted
         </span>
       </div>
 
@@ -898,6 +1662,56 @@ export function AllGrants({
   )
 }
 
+/**
+ * Same “merged strip” affordance as **Group by Stage** (`group/grprow` row): checkbox rail is visually open,
+ * one sticky band for label, trailing cluster for rollup numbers (no visible column gutters).
+ */
+function FunderPortfolioGroupHeader({
+  groupKey,
+  items,
+  collapsed,
+  onToggle,
+  sumAward,
+  sumPortfolioAwarded,
+  sumWeighted,
+}: {
+  groupKey: string
+  items: Grant[]
+  collapsed: boolean
+  onToggle: () => void
+  sumAward: number
+  sumPortfolioAwarded: number
+  sumWeighted: number
+}) {
+  const lastActivity = pickLastActivityDisplay(items)
+
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-expanded={!collapsed}
+      className="group/grprow z-30 flex w-max min-w-full flex-nowrap items-center gap-2 border-b border-border bg-zinc-50 px-0 py-0 text-left hover:bg-zinc-100 dark:bg-zinc-900/30 dark:hover:bg-zinc-900/45"
+    >
+      <span className="sticky left-[40px] z-[25] ml-[40px] flex shrink-0 items-center gap-2 bg-zinc-50 px-3 py-1.5 group-hover/grprow:bg-zinc-100 dark:bg-zinc-900/30 dark:group-hover/grprow:bg-zinc-900/45">
+        {collapsed ? (
+          <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+        ) : (
+          <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+        )}
+        <span className="text-xs font-semibold text-foreground">{groupKey}</span>
+      </span>
+      <span className="ml-auto flex min-w-0 shrink-0 items-center gap-3 px-3 py-1.5 text-[11px] tabular-nums text-muted-foreground">
+        <span className="font-semibold text-foreground">{fmtBoard$(sumPortfolioAwarded)} total awarded</span>
+        <span>${(sumAward / 1000).toFixed(0)}K pipeline</span>
+        {sumWeighted > 0 ? <span>${(sumWeighted / 1000).toFixed(0)}K weighted</span> : null}
+        <span className="min-w-0 max-w-[12rem] shrink truncate" title={lastActivity}>
+          {lastActivity}
+        </span>
+      </span>
+    </button>
+  )
+}
+
 function GrantRow({
   grant,
   cols,
@@ -907,6 +1721,7 @@ function GrantRow({
   onOpen,
   onUpdate,
   variant = "default",
+  boardAudience = false,
   showPinnedScrollShadow = false,
 }: {
   grant: Grant
@@ -917,6 +1732,7 @@ function GrantRow({
   onOpen: () => void
   onUpdate: (id: string, patch: Partial<Grant>, fieldLabel: string) => void
   variant?: "default" | "operator"
+  boardAudience?: boolean
   /** Checkbox + pinned grant column: soft right shadow when scrolled horizontally (operator). */
   showPinnedScrollShadow?: boolean
 }) {
@@ -924,7 +1740,7 @@ function GrantRow({
   const baseCell =
     !isSelected
       ? op
-        ? "bg-transparent hover:bg-muted/45 dark:bg-transparent dark:hover:bg-muted/35"
+        ? "bg-background hover:bg-muted/45 dark:bg-background dark:hover:bg-muted/35"
         : "bg-card dark:bg-card group-hover:bg-muted dark:group-hover:bg-muted"
       : ""
   const grantColShell = cn(
@@ -944,7 +1760,7 @@ function GrantRow({
         isSelected && "bg-violet-100 dark:bg-violet-950",
         !isSelected &&
           (op
-            ? "bg-transparent hover:bg-muted/45 dark:bg-transparent dark:hover:bg-muted/35"
+            ? "bg-background hover:bg-muted/45 dark:bg-background dark:hover:bg-muted/35"
             : "bg-card hover:bg-muted dark:bg-card dark:hover:bg-muted"),
       )}
       style={{ gridTemplateColumns: `40px ${gridTemplate}` }}
@@ -975,6 +1791,7 @@ function GrantRow({
           <Cell
             col={c}
             grant={grant}
+            boardAudience={boardAudience}
             onUpdate={onUpdate}
             stopPropagation={(e) => e.stopPropagation()}
           />
@@ -987,11 +1804,13 @@ function GrantRow({
 function Cell({
   col,
   grant,
+  boardAudience,
   onUpdate,
   stopPropagation,
 }: {
   col: ColDef
   grant: Grant
+  boardAudience?: boolean
   onUpdate: (id: string, patch: Partial<Grant>, fieldLabel: string) => void
   stopPropagation: (e: React.MouseEvent) => void
 }) {
@@ -1031,7 +1850,9 @@ function Cell({
             value={grant.stage}
             options={[...stageOrder]}
             onChange={(v) => onUpdate(grant.id, { stage: v as Stage }, "Status")}
-            renderValue={() => <StagePill stage={grant.stage} className="max-w-full" />}
+            renderValue={() => (
+              <StagePill stage={grant.stage} audience={boardAudience ? "board" : "internal"} className="max-w-full" />
+            )}
           />
         </div>
       )
@@ -1069,6 +1890,16 @@ function Cell({
           ${(grant.award / 1000).toFixed(0)}K
         </div>
       )
+    case "amountRequested": {
+      const w = grant.weighted ?? 0
+      return (
+        <div className={[wrap, "text-right tabular-nums text-foreground"].join(" ")}>
+          {w > 0 ? `$${(w / 1000).toFixed(0)}K` : "—"}
+        </div>
+      )
+    }
+    case "notificationDate":
+      return <div className={[wrap, "text-muted-foreground"].join(" ")}>{grant.lastUpdated}</div>
     case "owner":
       return (
         <div className={wrap} onClick={stopPropagation}>
@@ -1163,6 +1994,26 @@ function Cell({
           />
         </div>
       )
+    case "fpFunder":
+      return (
+        <div className={wrap}>
+          <span className="truncate text-foreground">{grant.funder}</span>
+        </div>
+      )
+    case "fpFunderType":
+      return <div className={wrap + " text-muted-foreground"}>{grant.funderType}</div>
+    case "fpTotalAwarded":
+      return (
+        <div className={[wrap, "text-right tabular-nums text-foreground font-medium"].join(" ")}>
+          {fmtBoard$(awardedSumGrant(grant))}
+        </div>
+      )
+    case "fpLastActivity":
+      return <div className={wrap + " text-muted-foreground"}>{grant.lastUpdated}</div>
+    case "fpRenewalStatus":
+      return (
+        <div className={wrap + " text-muted-foreground"}>{renewalStatusForGrant(grant, new Date())}</div>
+      )
     default:
       return <div className={wrap}>—</div>
   }
@@ -1212,6 +2063,7 @@ function EditablePicker({
 
 function SortableColumnHeader({
   col,
+  headerLabel,
   sortKey,
   sortDir,
   onSort,
@@ -1220,8 +2072,12 @@ function SortableColumnHeader({
   onDraggingChange,
   variant = "default",
   showPinnedScrollShadow = false,
+  pinnedTone = "default",
+  funderPortfolioLens = false,
 }: {
   col: ColDef
+  /** Overrides canonical column label (e.g. Board / Leadership template). */
+  headerLabel?: string
   sortKey: ColKey | null
   sortDir: SortDir
   onSort: (key: ColKey) => void
@@ -1230,12 +2086,40 @@ function SortableColumnHeader({
   onDraggingChange: (key: ColKey | null) => void
   variant?: "default" | "operator"
   showPinnedScrollShadow?: boolean
+  /** Operator pinned grant column header background: default = subtle glass; solid/clear used for mixed sticky header. */
+  pinnedTone?: "default" | "clear" | "solid"
+  /** Funder portfolio: column sort is fixed by funder rollup — fp columns show static headers. */
+  funderPortfolioLens?: boolean
 }) {
   const active = sortKey === col.key
   const Icon = !active ? ArrowUpDown : sortDir === "asc" ? ArrowUp : ArrowDown
   const isGrant = col.key === "grant"
-  const rightAlign = col.key === "award" || col.key === "deadline"
+  const columnTitle = headerLabel ?? col.label
+  const rightAlign =
+    col.key === "award" ||
+    col.key === "deadline" ||
+    col.key === "amountRequested" ||
+    col.key === "notificationDate" ||
+    col.key === "fpTotalAwarded"
+  const funderPortfolioFrozenCol = funderPortfolioLens && col.key.startsWith("fp")
   const op = variant === "operator"
+  const opGrantHeaderBg = "bg-background dark:bg-background"
+
+  const frozenPortfolioHeader = (
+    <div
+      className={cn(
+        "flex min-h-[36px] w-full min-w-0 items-center gap-1 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide",
+        rightAlign && "justify-end text-right",
+        col.key === "fpTotalAwarded" ? "text-foreground" : "text-muted-foreground",
+      )}
+      aria-sort={col.key === "fpTotalAwarded" ? "descending" : undefined}
+    >
+      <span className="min-w-0 truncate">{columnTitle}</span>
+      {col.key === "fpTotalAwarded" ? (
+        <ArrowDown className="h-3 w-3 shrink-0 opacity-70 text-foreground" aria-hidden />
+      ) : null}
+    </div>
+  )
 
   const sortLabelButton = (
     <button
@@ -1249,7 +2133,7 @@ function SortableColumnHeader({
       aria-sort={active ? (sortDir === "asc" ? "ascending" : "descending") : "none"}
     >
       {col.locked && <Lock className="h-2.5 w-2.5 shrink-0" />}
-      <span className="min-w-0 truncate">{col.label}</span>
+      <span className="min-w-0 truncate">{columnTitle}</span>
       <Icon className="h-3 w-3 shrink-0 opacity-70" aria-hidden />
     </button>
   )
@@ -1261,7 +2145,7 @@ function SortableColumnHeader({
           "relative sticky left-[40px] flex min-h-[36px] min-w-[320px] max-w-[320px] flex-col justify-center border-r border-border/60",
           op
             ? cn(
-                "bg-transparent dark:bg-card/40",
+                opGrantHeaderBg,
                 showPinnedScrollShadow
                   ? "z-[33] shadow-[3px_0_10px_-2px_rgba(0,0,0,0.07)] dark:shadow-[3px_0_10px_-2px_rgba(0,0,0,0.2)]"
                   : "z-[28] shadow-none",
@@ -1302,12 +2186,12 @@ function SortableColumnHeader({
         }}
         onDragEnd={() => onDraggingChange(null)}
         className="flex h-full w-full cursor-grab touch-none items-center justify-center border-r border-transparent text-muted-foreground hover:bg-muted/50 hover:text-foreground active:cursor-grabbing"
-        aria-label={`Reorder ${col.label} column`}
+        aria-label={`Reorder ${columnTitle} column`}
         title="Drag to reorder column"
       >
         <GripVertical className="h-3.5 w-3.5 opacity-70" />
       </button>
-      {sortLabelButton}
+      {funderPortfolioFrozenCol ? frozenPortfolioHeader : sortLabelButton}
     </div>
   )
 }
@@ -1372,11 +2256,87 @@ function FilterChip({
   )
 }
 
+function BoardPeriodFilterChip({
+  year,
+  options,
+  onChange,
+}: {
+  year: string | null
+  options: string[]
+  onChange: (y: string | null) => void
+}) {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className={[
+            "inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border px-2 text-[11px]",
+            year
+              ? "border-primary/25 bg-primary/5 text-foreground"
+              : "border-border text-muted-foreground hover:text-foreground",
+          ].join(" ")}
+          title={
+            year
+              ? `Grant deadlines in calendar year ${year} (board report scope)`
+              : "Show grants across all calendar years — click to choose a year"
+          }
+        >
+          <Filter className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden />
+          <span className="shrink-0 font-medium text-muted-foreground">Period</span>
+          {year ? (
+            <>
+              <span className="text-muted-foreground/60">:</span>
+              <span className="shrink-0 font-semibold text-primary">YTD {year}</span>
+              <span
+                role="button"
+                onClick={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  onChange(null)
+                }}
+                className="ml-0.5 rounded p-0.5 hover:bg-primary/10"
+                aria-label="Clear period filter"
+              >
+                <X className="h-2.5 w-2.5" />
+              </span>
+            </>
+          ) : (
+            <span className="text-muted-foreground/80">All time</span>
+          )}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-44 p-1">
+        <button
+          type="button"
+          onClick={() => onChange(null)}
+          className="flex w-full items-center justify-between rounded px-2 py-1.5 text-xs hover:bg-muted"
+        >
+          All time
+          {!year ? <span className="text-primary">✓</span> : null}
+        </button>
+        {options.map((opt) => (
+          <button
+            key={opt}
+            type="button"
+            onClick={() => onChange(opt)}
+            className="flex w-full items-center justify-between rounded px-2 py-1.5 text-xs hover:bg-muted"
+          >
+            YTD {opt}
+            {opt === year ? <span className="text-primary">✓</span> : null}
+          </button>
+        ))}
+      </PopoverContent>
+    </Popover>
+  )
+}
+
 function GroupByPicker({ value, onChange }: { value: GroupBy; onChange: (v: GroupBy) => void }) {
   const options: { id: GroupBy; label: string }[] = [
     { id: "stage", label: "Stage" },
     { id: "owner", label: "Owner" },
     { id: "funderType", label: "Funder type" },
+    { id: "funder", label: "Funder" },
     { id: "projectGroup", label: "Project group" },
     { id: "deadline", label: "Deadline" },
     { id: "none", label: "No grouping" },

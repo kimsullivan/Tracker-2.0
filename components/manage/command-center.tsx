@@ -1,13 +1,72 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useMemo, useState, type Dispatch, type SetStateAction } from "react"
 import { actionQueue, anomalies, grants, team } from "@/lib/manage/data"
-import type { ActionItem, Stage } from "@/lib/manage/types"
-import { StagePill } from "./status-pill"
-import { OwnerAvatar } from "./owner-avatar"
-import { AlertTriangle, ArrowUpDown, ArrowUpRight, Check, Flag, Info, TrendingDown, TrendingUp } from "lucide-react"
+import type { ActionItem, FunderType, IssueNavigationContext, Stage, WorkIssueCategory } from "@/lib/manage/types"
+import { OwnerAvatar, OwnerCell } from "./owner-avatar"
+import {
+  AlertTriangle,
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
+  ArrowUpRight,
+  Check,
+  Clock,
+  DollarSign,
+  FileWarning,
+  Flag,
+  Info,
+  TrendingDown,
+  TrendingUp,
+} from "lucide-react"
+import type { LucideIcon } from "lucide-react"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
+import { Badge } from "@/components/ui/badge"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
+import {
+  FUNDER_BREAKDOWN_ORDER,
+  sumAward,
+  type KpiDrill,
+} from "@/lib/manage/kpi-bridge"
+import type { Grant } from "@/lib/manage/types"
+import { PulseStripBridgeRecharts } from "./all-grants-kpi-tiles"
+import { useMixAltUi } from "@/components/manage/mix-alt-ui-context"
+import { countEffectiveUpcoming, isEffectiveUpcoming } from "@/components/manage/mix-alt-agent"
+
+const MIXALT_EMPTY_SNOOZE_IDS = new Set<string>()
+
+/** Column / urgency sort for the operator My work table and toolbar. */
+export type QueueSortKey = "urgency" | "item" | "grant" | "owner" | "updated" | "issue"
+export type QueueSort = { key: QueueSortKey; dir: "asc" | "desc" }
+
+/** Shared queue state when My work toolbar is lifted beside grain tabs (mixed / mixed-alt). */
+export type MyWorkQueueState = {
+  items: ActionItem[]
+  setItems: Dispatch<SetStateAction<ActionItem[]>>
+  hideDone: boolean
+  setHideDone: Dispatch<SetStateAction<boolean>>
+  queueSort: QueueSort
+  setQueueSort: Dispatch<SetStateAction<QueueSort>>
+  sortedVisible: ActionItem[]
+  toggle: (id: string) => void
+}
+
+/** Short labels under funder breakdown bars (five columns). */
+const FUNDER_COLUMN_LABEL: Record<FunderType, string> = {
+  Federal: "Federal",
+  Private: "Private",
+  Corporate: "Corp.",
+  State: "State",
+  Local: "Local",
+}
 
 /** Pipeline bars: sequential ramp from theme tokens (--viz-ramp-1 … 6) */
 const PIPELINE_RAMP = [
@@ -22,7 +81,21 @@ const PIPELINE_RAMP = [
 const CARD_SHELL =
   "rounded-[12px] border border-elevated-stroke bg-transparent shadow-sm dark:border-border dark:bg-card dark:shadow-sm"
 
-export function CommandCenter({ onOpenGrant }: { onOpenGrant: (id: string) => void }) {
+/** My work operator table: no card chrome so rows read as a flat list. */
+const TASK_QUEUE_SHELL =
+  "min-w-0 overflow-visible rounded-none border-0 bg-transparent shadow-none"
+
+function MiniSparkline({ accent }: { accent: "primary" | "chart-3" }) {
+  const points = "0,18 12,15 24,16 36,12 48,14 60,9 72,11 84,7 96,10 108,5"
+  const color = accent === "primary" ? "var(--primary)" : "var(--chart-3)"
+  return (
+    <svg viewBox="0 0 108 22" className="mt-2 h-6 w-full" preserveAspectRatio="none">
+      <polyline fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" points={points} />
+    </svg>
+  )
+}
+
+export function CommandCenter({ onOpenGrant }: { onOpenGrant: (id: string, ctx?: IssueNavigationContext) => void }) {
   return (
     <div className="mx-auto w-full max-w-[min(100%,88rem)] space-y-7 px-8 py-8 md:px-10">
       <Greeting />
@@ -33,42 +106,170 @@ export function CommandCenter({ onOpenGrant }: { onOpenGrant: (id: string) => vo
 }
 
 /** Main column layout: queue + right rail. Tasks column ~2/3 width; grid stays fluid with the container. */
-export function CommandCenterWorkspace({ onOpenGrant }: { onOpenGrant: (id: string) => void }) {
+export function CommandCenterWorkspace({
+  onOpenGrant,
+  hideTeamLoad,
+  hideAnomaliesPanel,
+  operatorTaskQueue,
+  myWorkQueue,
+}: {
+  onOpenGrant: (id: string, ctx?: IssueNavigationContext) => void
+  /** Mixed-alt: omit Team load card from the right rail. */
+  hideTeamLoad?: boolean
+  /** Mixed-alt: omit “Worth your attention” anomalies card from the right rail. */
+  hideAnomaliesPanel?: boolean
+  /** Mixed-alt only: My work table matches All grants operator density + chips (not used on `?prototype=mixed`). */
+  operatorTaskQueue?: boolean
+  /** Mixed / mixed-alt: shared queue state when toolbar lives beside grain tabs. */
+  myWorkQueue?: MyWorkQueueState
+}) {
+  const showAnomalies = !hideAnomaliesPanel
+  const showTeamLoad = !hideTeamLoad
+  const showRightRail = showAnomalies || showTeamLoad
+
+  if (!showRightRail) {
+    return (
+      <div className="min-w-0 w-full space-y-7">
+        <ActionQueue onOpenGrant={onOpenGrant} operatorShell={operatorTaskQueue} myWorkQueue={myWorkQueue} />
+      </div>
+    )
+  }
+
   return (
     <div className="grid w-full grid-cols-1 gap-7 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
       <div className="min-w-0 space-y-7">
-        <ActionQueue onOpenGrant={onOpenGrant} />
+        <ActionQueue onOpenGrant={onOpenGrant} operatorShell={operatorTaskQueue} myWorkQueue={myWorkQueue} />
       </div>
       <div className="min-w-0 space-y-6">
-        <AnomaliesPanel />
-        <TeamLoad />
+        {showAnomalies ? <AnomaliesPanel /> : null}
+        {showTeamLoad ? <TeamLoad /> : null}
       </div>
     </div>
   )
 }
 
-export function Greeting() {
+export function Greeting({
+  hideAttentionCallout,
+  attentionSummary,
+  firstName = "Maria",
+  showDate = true,
+}: {
+  hideAttentionCallout?: boolean
+  /** My work (mixed shells): replaces default grants summary line. */
+  attentionSummary?: string
+  firstName?: string
+  showDate?: boolean
+}) {
   const date = new Date().toLocaleDateString("en-US", {
     weekday: "long",
     month: "long",
     day: "numeric",
   })
   const active = grants.filter((g) => g.stage !== "Closed" && g.stage !== "Declined").length
-  const dueSoon = grants.filter((g) => g.daysToDeadline <= 14 && g.stage !== "Closed").length
+  const dueSoon = grants.filter((g) => g.daysToDeadline <= 14 && g.stage !== "Closed" && g.stage !== "Declined").length
   const blocked = grants.filter((g) => g.blocked).length
 
   return (
     <div className="flex flex-col gap-1">
       <div className="flex items-center gap-3">
         <h1 className="font-heading text-2xl font-bold text-foreground">
-          Good morning, <span className="text-primary">Maria</span>
+          Good morning, <span className="text-primary">{firstName}</span>
         </h1>
-        <span className="text-xs text-muted-foreground">· {date}</span>
+        {showDate ? <span className="text-xs text-muted-foreground">· {date}</span> : null}
       </div>
       <p className="text-sm text-muted-foreground">
-        {active} active grants · {dueSoon} due in next 14 days · {blocked} blocked — Hartford burn is the one thing
-        worth your attention.
+        {attentionSummary ? (
+          attentionSummary
+        ) : (
+          <>
+            {active} active grants · {dueSoon} due in next 14 days · {blocked} blocked
+            {hideAttentionCallout ? "." : " — Hartford burn is the one thing worth your attention."}
+          </>
+        )}
       </p>
+    </div>
+  )
+}
+
+/** Issue-style KPI row for My work (mixed prototypes only — pipeline KPIs stay on All grants). */
+export function MyWorkAttentionStrip({ items }: { items: ActionItem[] }) {
+  const mix = useMixAltUi()
+  const threshold = mix?.upcomingThresholdDays ?? 14
+  const snoozedIds = mix?.snoozedIssueIds ?? MIXALT_EMPTY_SNOOZE_IDS
+
+  const counts = useMemo(() => {
+    const open = items.filter((i) => !i.done && !(i.snoozed || snoozedIds.has(i.id)))
+    const dataGapCats = new Set<WorkIssueCategory>(["missing_data", "setup", "inactive"])
+    return {
+      overdue: open.filter((i) => i.issueCategory === "overdue").length,
+      upcoming: countEffectiveUpcoming(items, threshold, snoozedIds),
+      spend: open.filter((i) => i.issueCategory === "spend").length,
+      dataGaps: open.filter((i) => dataGapCats.has(i.issueCategory)).length,
+    }
+  }, [items, threshold, snoozedIds])
+
+  return (
+    <div className="grid w-full min-w-0 grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <MyWorkAttentionTile
+        value={counts.overdue}
+        title="Overdue"
+        hint="Act today"
+        icon={AlertTriangle}
+        iconClassName="bg-rose-100 text-rose-700 dark:bg-rose-950/55 dark:text-rose-300"
+      />
+      <MyWorkAttentionTile
+        value={counts.upcoming}
+        title="Upcoming"
+        hint={`Next ${threshold} days`}
+        icon={Clock}
+        iconClassName="bg-amber-100 text-amber-900 dark:bg-amber-950/40 dark:text-amber-300"
+      />
+      <MyWorkAttentionTile
+        value={counts.spend}
+        title="Spend"
+        hint="Off-pace this period"
+        icon={DollarSign}
+        iconClassName="bg-violet-100 text-violet-700 dark:bg-violet-950/45 dark:text-violet-300"
+      />
+      <MyWorkAttentionTile
+        value={counts.dataGaps}
+        title="Data gaps"
+        hint="Missing fields, setup, inactive"
+        icon={FileWarning}
+        iconClassName="bg-stone-200 text-stone-800 dark:bg-stone-800 dark:text-stone-100"
+      />
+    </div>
+  )
+}
+
+function MyWorkAttentionTile({
+  value,
+  title,
+  hint,
+  icon: Icon,
+  iconClassName,
+}: {
+  value: number
+  title: string
+  hint: string
+  icon: LucideIcon
+  iconClassName: string
+}) {
+  return (
+    <div className={cn(CARD_SHELL, "relative p-5")}>
+      <div
+        className={cn(
+          "absolute right-4 top-4 flex h-9 w-9 items-center justify-center rounded-full shadow-inner",
+          iconClassName,
+        )}
+      >
+        <Icon className="h-4 w-4" strokeWidth={2} aria-hidden />
+      </div>
+      <div className="pr-12 font-heading text-2xl font-bold tabular-nums tracking-tight text-foreground">
+        {value}
+      </div>
+      <div className="mt-2 font-heading text-sm font-semibold text-foreground">{title}</div>
+      <p className="mt-0.5 max-w-[14rem] text-[11px] leading-snug text-muted-foreground">{hint}</p>
     </div>
   )
 }
@@ -93,9 +294,18 @@ export function PulseStrip() {
         sub="vs prior 90d"
         accent="chart-3"
       />
-      <CapacityCard />
+      <FunderBreakdownCard />
     </div>
   )
+}
+
+/** KPI tiles — Recharts visuals; drills narrow the filtered grants table (`mixed-alt`). */
+export function PulseStripBridge(props: {
+  baseScope: Grant[]
+  drill: KpiDrill | null
+  onDrill: (next: KpiDrill | null) => void
+}) {
+  return <PulseStripBridgeRecharts {...props} />
 }
 
 function PipelineCard() {
@@ -130,7 +340,7 @@ function PipelineCard() {
     <div className={cn(CARD_SHELL, "p-6")}>
       <div className="mb-3 flex items-baseline justify-between">
         <div>
-          <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Pipeline by stage</div>
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Pipeline by stage</div>
           <div className="mt-1 font-heading text-xl font-bold text-card-foreground">
             {pipeline.totalGrants} grants · {fmtMoney(pipeline.totalAward)}
           </div>
@@ -139,7 +349,7 @@ function PipelineCard() {
       <div className="flex h-[92px] gap-2">
         {pipeline.stages.map((s) => (
           <div key={s.label} className="flex min-h-0 min-w-0 flex-1 flex-col justify-end gap-1">
-            <div className="text-center text-[11px] font-semibold tabular-nums text-card-foreground">{s.count}</div>
+            <div className="text-center text-[11px] font-bold tabular-nums text-card-foreground">{s.count}</div>
             <div className="flex min-h-[52px] flex-1 flex-col justify-end">
               <div
                 className="w-full rounded-sm shadow-sm transition-all duration-300"
@@ -176,12 +386,12 @@ function MetricCard({
   const Trend = deltaDirection === "up" ? TrendingUp : TrendingDown
   return (
     <div className={cn(CARD_SHELL, "p-6")}>
-      <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{label}</div>
+      <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</div>
       <div className="mt-1 flex items-baseline gap-2">
         <span className="font-heading text-2xl font-bold text-card-foreground">{value}</span>
         <span
           className={[
-            "inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium",
+            "inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-semibold",
             goodTrend ? "bg-chart-2/12 text-chart-2" : "bg-chart-4/12 text-chart-4",
           ].join(" ")}
         >
@@ -196,6 +406,96 @@ function MetricCard({
   )
 }
 
+/** Legend for the stacked funder strip: maps colors → categories (counts & share). Optional row drill. */
+function FunderBreakdownLegend({
+  rows,
+  totalGrants,
+  drill,
+  onPick,
+}: {
+  rows: { funderType: FunderType; count: number; label: string; color: string }[]
+  totalGrants: number
+  drill?: KpiDrill | null
+  onPick?: (ft: FunderType) => void
+}) {
+  return (
+    <ul
+      className="mt-3 grid grid-cols-1 gap-x-5 gap-y-1 sm:grid-cols-2"
+      aria-label="Funder breakdown legend"
+    >
+      {rows.map((r) => {
+        const pct = Math.round((100 * r.count) / totalGrants)
+        const active = drill?.kind === "funder" && drill.funderType === r.funderType
+        const rowInner = (
+          <>
+            <span
+              className="mt-[5px] h-2 w-2 shrink-0 rounded-[2px] shadow-sm ring-1 ring-black/5 dark:ring-white/10"
+              style={{ backgroundColor: r.color }}
+              aria-hidden
+            />
+            <span className="min-w-0 flex-1 truncate text-[11px] font-medium leading-snug text-foreground">{r.funderType}</span>
+            <span className="shrink-0 tabular-nums text-[11px] font-semibold text-card-foreground">{r.count}</span>
+            <span className="w-9 shrink-0 text-right tabular-nums text-[10px] font-semibold text-muted-foreground">{pct}%</span>
+          </>
+        )
+        if (onPick) {
+          return (
+            <li key={r.funderType}>
+              <button
+                type="button"
+                onClick={() => onPick(r.funderType)}
+                title={`Filter table to ${r.funderType}`}
+                aria-pressed={active}
+                className={cn(
+                  "flex w-full items-start gap-2 rounded-md px-1 py-1 text-left outline-none transition-colors hover:bg-muted/25 focus-visible:ring-2 focus-visible:ring-primary/40",
+                  active && "bg-muted/30 ring-1 ring-primary/35",
+                )}
+              >
+                {rowInner}
+              </button>
+            </li>
+          )
+        }
+        return (
+          <li key={r.funderType} className="flex items-start gap-2 px-1 py-1">
+            {rowInner}
+          </li>
+        )
+      })}
+    </ul>
+  )
+}
+
+/** Single stacked strip: segment width = share of grants (linear composition). */
+function FunderMixStrip({
+  rows,
+}: {
+  rows: { funderType: FunderType; count: number; color: string }[]
+}) {
+  return (
+    <div
+      className="mt-3 flex h-3 w-full flex-row overflow-hidden rounded-full bg-muted/50 ring-1 ring-border/40"
+      role="img"
+      aria-label="Grants by funder type, proportional bar"
+    >
+      {rows.map((r) =>
+        r.count > 0 ? (
+          <div
+            key={r.funderType}
+            title={`${r.funderType}: ${r.count}`}
+            className="h-full min-w-0 border-r border-background/20 last:border-r-0"
+            style={{
+              flexGrow: r.count,
+              flexBasis: 0,
+              backgroundColor: r.color,
+            }}
+          />
+        ) : null,
+      )}
+    </div>
+  )
+}
+
 function Sparkline({ accent }: { accent: "primary" | "chart-3" }) {
   const points = "0,18 12,15 24,16 36,12 48,14 60,9 72,11 84,7 96,10 108,5"
   const color = accent === "primary" ? "var(--primary)" : "var(--chart-3)"
@@ -206,47 +506,109 @@ function Sparkline({ accent }: { accent: "primary" | "chart-3" }) {
   )
 }
 
-function CapacityCard() {
+function FunderBreakdownCard() {
+  const breakdown = useMemo(() => {
+    const activeGrants = grants.filter((g) => g.stage !== "Closed" && g.stage !== "Declined")
+    const stages = FUNDER_BREAKDOWN_ORDER.map((ft, i) => ({
+      funderType: ft,
+      count: activeGrants.filter((g) => g.funderType === ft).length,
+      color: PIPELINE_RAMP[i],
+      label: FUNDER_COLUMN_LABEL[ft],
+    }))
+    const totalGrants = activeGrants.length
+    const totalAward = activeGrants.reduce((acc, g) => acc + g.award, 0)
+    return { stages, totalGrants, totalAward }
+  }, [])
+
+  const fmtMoney = (n: number) =>
+    n >= 1_000_000 ? `$${(n / 1_000_000).toFixed(2)}M` : `$${(n / 1_000).toFixed(0)}K`
+
   return (
     <div className={cn(CARD_SHELL, "p-6")}>
-      <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Capacity heat</div>
-      <div className="mt-1 flex items-baseline gap-2">
-        <span className="font-heading text-2xl font-bold text-card-foreground">81%</span>
-        <span className="rounded bg-chart-4/10 px-1.5 py-0.5 text-[10px] font-medium text-chart-4">Maria 142%</span>
-      </div>
-      <div className="mt-3 space-y-1.5">
-        {team.slice(0, 3).map((m) => (
-          <div key={m.id} className="flex items-center gap-2">
-            <span className="w-10 text-[10px] text-muted-foreground">{m.name.split(" ")[0]}</span>
-            <div className="relative h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
-              <div
-                className="absolute inset-y-0 left-0 rounded-full"
-                style={{
-                  width: `${Math.min(m.load, 100)}%`,
-                  backgroundColor: m.load > 100 ? "var(--chart-5)" : m.load > 85 ? "var(--chart-4)" : "var(--chart-3)",
-                }}
-              />
-            </div>
-            <span className="w-9 text-right text-[10px] tabular-nums text-card-foreground">{m.load}%</span>
+      <div className="mb-2 flex items-baseline justify-between">
+        <div>
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Funder breakdown</div>
+          <div className="mt-1 font-heading text-xl font-bold text-card-foreground">
+            {breakdown.totalGrants} grants · {fmtMoney(breakdown.totalAward)}
           </div>
-        ))}
+        </div>
       </div>
+      <FunderMixStrip rows={breakdown.stages.map((s) => ({ funderType: s.funderType, count: s.count, color: s.color }))} />
+      <FunderBreakdownLegend rows={breakdown.stages} totalGrants={Math.max(1, breakdown.totalGrants)} />
     </div>
   )
 }
 
-function ActionQueue({ onOpenGrant }: { onOpenGrant: (id: string) => void }) {
-  const [items, setItems] = useState<ActionItem[]>(actionQueue)
+const WORK_ISSUE_CATEGORY_LABEL: Record<WorkIssueCategory, string> = {
+  upcoming: "Upcoming",
+  spend: "Spend",
+  setup: "Set Up",
+  inactive: "Inactive",
+  overdue: "Overdue",
+  missing_data: "Missing Data",
+}
+
+function parseTaskLastUpdated(s: string): number {
+  const t = Date.parse(s)
+  return Number.isNaN(t) ? 0 : t
+}
+
+function ownerSortKey(ownerId: string): string {
+  return team.find((m) => m.id === ownerId)?.name ?? ""
+}
+
+function compareQueueItems(a: ActionItem, b: ActionItem, sort: QueueSort): number {
+  let cmp = 0
+  switch (sort.key) {
+    case "urgency":
+      cmp = a.daysOut - b.daysOut
+      break
+    case "item": {
+      const sa = `${a.itemLabel}\u0000${a.detail}`
+      const sb = `${b.itemLabel}\u0000${b.detail}`
+      cmp = sa.localeCompare(sb, undefined, { sensitivity: "base" })
+      break
+    }
+    case "grant":
+      cmp = a.grantTitle.localeCompare(b.grantTitle, undefined, { sensitivity: "base" })
+      break
+    case "owner":
+      cmp = ownerSortKey(a.ownerId).localeCompare(ownerSortKey(b.ownerId), undefined, { sensitivity: "base" })
+      break
+    case "updated":
+      cmp = parseTaskLastUpdated(a.lastUpdatedDisplay) - parseTaskLastUpdated(b.lastUpdatedDisplay)
+      break
+    case "issue":
+      cmp = WORK_ISSUE_CATEGORY_LABEL[a.issueCategory].localeCompare(
+        WORK_ISSUE_CATEGORY_LABEL[b.issueCategory],
+        undefined,
+        { sensitivity: "base" },
+      )
+      break
+    default:
+      cmp = 0
+  }
+  if (cmp !== 0) return sort.dir === "asc" ? cmp : -cmp
+  return a.id.localeCompare(b.id)
+}
+
+function cycleQueueSort(prev: QueueSort, column: QueueSortKey): QueueSort {
+  if (prev.key === column) return { key: column, dir: prev.dir === "asc" ? "desc" : "asc" }
+  return { key: column, dir: "asc" }
+}
+
+/** Mixed shells: lift queue state so toolbar can sit beside My work / All grants tabs. */
+export function useMyWorkQueueState(): MyWorkQueueState {
+  const [items, setItems] = useState<ActionItem[]>(() => [...actionQueue])
   const [hideDone, setHideDone] = useState(false)
-  const [dueSort, setDueSort] = useState<"asc" | "desc">("asc")
+  const [queueSort, setQueueSort] = useState<QueueSort>({ key: "urgency", dir: "asc" })
 
   const visible = useMemo(() => (hideDone ? items.filter((i) => !i.done) : items), [items, hideDone])
   const sortedVisible = useMemo(() => {
     const arr = [...visible]
-    arr.sort((a, b) => (dueSort === "asc" ? a.daysOut - b.daysOut : b.daysOut - a.daysOut))
+    arr.sort((a, b) => compareQueueItems(a, b, queueSort))
     return arr
-  }, [visible, dueSort])
-  const remaining = items.filter((i) => !i.done).length
+  }, [visible, queueSort])
 
   function toggle(id: string) {
     setItems((prev) =>
@@ -254,7 +616,7 @@ function ActionQueue({ onOpenGrant }: { onOpenGrant: (id: string) => void }) {
         if (i.id !== id) return i
         const done = !i.done
         toast(done ? "Marked done" : "Reopened", {
-          description: i.title,
+          description: i.itemLabel,
           action: { label: "Undo", onClick: () => toggle(id) },
         })
         return { ...i, done }
@@ -262,92 +624,473 @@ function ActionQueue({ onOpenGrant }: { onOpenGrant: (id: string) => void }) {
     )
   }
 
+  return {
+    items,
+    setItems,
+    hideDone,
+    setHideDone,
+    queueSort,
+    setQueueSort,
+    sortedVisible,
+    toggle,
+  }
+}
+
+/** Toolbar controls for My work — place beside `GrainNavToggle` on mixed prototypes. */
+export function MyWorkQueueToolbar({
+  queueSort,
+  setQueueSort,
+  hideDone,
+  setHideDone,
+}: {
+  queueSort: QueueSort
+  setQueueSort: Dispatch<SetStateAction<QueueSort>>
+  hideDone: boolean
+  setHideDone: Dispatch<SetStateAction<boolean>>
+}) {
+  const dueLabel =
+    queueSort.key === "urgency"
+      ? queueSort.dir === "asc"
+        ? "soonest"
+        : "latest"
+      : "soonest"
+
   return (
-    <div className={cn(CARD_SHELL, "overflow-hidden")}>
-      <div className="flex flex-wrap items-center justify-between gap-2 px-6 py-4">
-        <div className="flex flex-wrap items-center gap-2">
-          <h2 className="font-heading text-base font-bold text-card-foreground">Today's queue</h2>
-          <span className="rounded-full bg-muted/80 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
-            {remaining} open
-          </span>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setDueSort((d) => (d === "asc" ? "desc" : "asc"))}
-            className="inline-flex items-center gap-1 rounded-md bg-muted/80 px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground"
-            title="Sort by days to deadline"
-          >
-            <ArrowUpDown className="h-3.5 w-3.5 opacity-80" />
-            <span>Due {dueSort === "asc" ? "soonest" : "latest"}</span>
-          </button>
-          <button
-            onClick={() => setHideDone((v) => !v)}
-            className="text-[11px] text-muted-foreground hover:text-foreground"
-          >
-            {hideDone ? "Show completed" : "Hide completed"}
-          </button>
-        </div>
-      </div>
-      <ul>
-        {sortedVisible.map((item) => (
-          <ActionRow
-            key={item.id}
-            item={item}
-            onToggle={() => toggle(item.id)}
-            onOpen={() => onOpenGrant(item.grantId)}
-          />
-        ))}
-      </ul>
+    <div className="flex flex-wrap items-center justify-end gap-2">
+      <button
+        type="button"
+        onClick={() =>
+          setQueueSort((prev) =>
+            prev.key === "urgency"
+              ? { key: "urgency", dir: prev.dir === "asc" ? "desc" : "asc" }
+              : { key: "urgency", dir: "asc" },
+          )
+        }
+        className="inline-flex items-center gap-1 rounded-md bg-muted/80 px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground"
+        title="Sort by urgency (days to deadline)"
+      >
+        <ArrowUpDown className="h-3.5 w-3.5 opacity-80" />
+        <span>Due {dueLabel}</span>
+      </button>
+      <button
+        type="button"
+        onClick={() => setHideDone((v) => !v)}
+        className="text-[11px] text-muted-foreground hover:text-foreground"
+      >
+        {hideDone ? "Show completed" : "Hide completed"}
+      </button>
     </div>
   )
 }
 
-function ActionRow({ item, onToggle, onOpen }: { item: ActionItem; onToggle: () => void; onOpen: () => void }) {
-  const urgency = item.daysOut <= 0 ? "crit" : item.daysOut <= 3 ? "warn" : "info"
-  const urgencyColor =
-    urgency === "crit"
-      ? "text-rose-950 dark:text-rose-100"
-      : urgency === "warn"
-        ? "text-amber-950 dark:text-amber-100"
-        : "text-muted-foreground"
+/** Matches All grants operator row cells (`text-xs` + `px-3 py-2.5` in `all-grants.tsx`). */
+const AG_OPERATOR_CELL = "text-xs font-normal leading-normal text-foreground"
+
+const ISSUE_CATEGORY_BADGE: Record<WorkIssueCategory, string> = {
+  upcoming:
+    "border-slate-300 bg-slate-50 text-slate-900 dark:border-slate-600 dark:bg-slate-900/45 dark:text-slate-100",
+  spend: "border-rose-200 bg-rose-50 text-rose-950 dark:border-rose-800 dark:bg-rose-950/45 dark:text-rose-50",
+  setup: "border-sky-200 bg-sky-50 text-sky-950 dark:border-sky-700 dark:bg-sky-950/40 dark:text-sky-50",
+  inactive:
+    "border-amber-200 bg-amber-50 text-amber-950 dark:border-amber-700 dark:bg-amber-950/45 dark:text-amber-50",
+  overdue:
+    "border-orange-200 bg-orange-50 text-orange-950 dark:border-orange-700 dark:bg-orange-950/45 dark:text-orange-50",
+  missing_data:
+    "border-emerald-200 bg-emerald-50 text-emerald-950 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-50",
+}
+
+function IssueCategoryBadge({ category }: { category: WorkIssueCategory }) {
+  return (
+    <Badge
+      variant="outline"
+      className={cn(
+        "max-w-[10rem] truncate border px-2 py-0.5 text-[11px] font-normal leading-tight shadow-none",
+        ISSUE_CATEGORY_BADGE[category],
+      )}
+    >
+      {WORK_ISSUE_CATEGORY_LABEL[category]}
+    </Badge>
+  )
+}
+
+function ActionQueue({
+  onOpenGrant,
+  operatorShell,
+  myWorkQueue,
+}: {
+  onOpenGrant: (id: string, ctx?: IssueNavigationContext) => void
+  operatorShell?: boolean
+  myWorkQueue?: MyWorkQueueState
+}) {
+  if (myWorkQueue) {
+    return (
+      <ActionQueueInner
+        onOpenGrant={onOpenGrant}
+        operatorShell={operatorShell}
+        q={myWorkQueue}
+        embeddedToolbar={false}
+      />
+    )
+  }
+  return <ActionQueueStandalone onOpenGrant={onOpenGrant} operatorShell={operatorShell} />
+}
+
+function ActionQueueStandalone({
+  onOpenGrant,
+  operatorShell,
+}: {
+  onOpenGrant: (id: string, ctx?: IssueNavigationContext) => void
+  operatorShell?: boolean
+}) {
+  const q = useMyWorkQueueState()
+  return (
+    <ActionQueueInner onOpenGrant={onOpenGrant} operatorShell={operatorShell} q={q} embeddedToolbar />
+  )
+}
+
+function ActionQueueInner({
+  onOpenGrant,
+  operatorShell,
+  q,
+  embeddedToolbar,
+}: {
+  onOpenGrant: (id: string, ctx?: IssueNavigationContext) => void
+  operatorShell?: boolean
+  q: MyWorkQueueState
+  embeddedToolbar: boolean
+}) {
+  const { sortedVisible, toggle } = q
 
   return (
-    <li className={["group grid grid-cols-[auto_1fr_auto_auto_auto] items-center gap-3 px-6 py-4 hover:bg-muted/40 transition-colors", item.done && "opacity-50"].filter(Boolean).join(" ")}>
+    <div
+      className={cn(operatorShell && !embeddedToolbar ? TASK_QUEUE_SHELL : CARD_SHELL, "overflow-visible")}
+    >
+      {embeddedToolbar ? (
+        <div className="flex flex-wrap items-center justify-between gap-2 px-6 py-4">
+          <h2 className="font-heading text-base font-bold text-card-foreground">My work</h2>
+          <MyWorkQueueToolbar
+            queueSort={q.queueSort}
+            setQueueSort={q.setQueueSort}
+            hideDone={q.hideDone}
+            setHideDone={q.setHideDone}
+          />
+        </div>
+      ) : null}
+      {operatorShell ? (
+        <OperatorTaskTable
+          sortedVisible={sortedVisible}
+          toggle={toggle}
+          onOpenGrant={onOpenGrant}
+          queueSort={q.queueSort}
+          setQueueSort={q.setQueueSort}
+        />
+      ) : (
+        <SimpleTaskList sortedVisible={sortedVisible} toggle={toggle} onOpenGrant={onOpenGrant} />
+      )}
+    </div>
+  )
+}
+
+function SimpleTaskList({
+  sortedVisible,
+  toggle,
+  onOpenGrant,
+}: {
+  sortedVisible: ActionItem[]
+  toggle: (id: string) => void
+  onOpenGrant: (id: string, ctx?: IssueNavigationContext) => void
+}) {
+  return (
+    <ul className="divide-y divide-border">
+      {sortedVisible.map((item) => (
+        <li
+          key={item.id}
+          className={cn(
+            "flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-start sm:gap-4 sm:px-6",
+            item.done && "opacity-50",
+          )}
+        >
+          <div className="flex shrink-0 gap-3 sm:pt-0.5">
+            <button
+              type="button"
+              onClick={() => toggle(item.id)}
+              className={[
+                "flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors",
+                item.done ? "border-chart-3 bg-chart-3 text-white" : "border-input hover:border-foreground",
+              ].join(" ")}
+              aria-label={item.done ? "Mark not done" : "Mark done"}
+            >
+              {item.done && <Check className="h-3 w-3" strokeWidth={3} />}
+            </button>
+          </div>
+          <div className="min-w-0 flex-1 space-y-1">
+            <div className={cn(item.done && "line-through")}>
+              <span className="font-semibold text-foreground">{item.itemLabel}</span>
+              <p className="mt-0.5 text-muted-foreground">{item.detail}</p>
+            </div>
+            <button
+              type="button"
+              onClick={() =>
+                onOpenGrant(item.grantId, {
+                  fieldKey: item.highlightFieldKey,
+                  fieldLabel: item.highlightFieldLabel,
+                  reason: item.highlightReason,
+                })
+              }
+              className="text-left text-sm font-medium text-primary hover:underline"
+            >
+              {item.grantTitle}
+            </button>
+          </div>
+          <div className="flex shrink-0 flex-row items-center gap-3 sm:flex-col sm:items-end">
+            <OwnerAvatar id={item.ownerId} size={22} />
+            <button
+              type="button"
+              onClick={() =>
+                onOpenGrant(item.grantId, {
+                  fieldKey: item.highlightFieldKey,
+                  fieldLabel: item.highlightFieldLabel,
+                  reason: item.highlightReason,
+                })
+              }
+              className="inline-flex h-7 max-w-[11rem] truncate items-center rounded-md border border-border bg-background px-2 text-[11px] font-medium text-foreground hover:bg-muted"
+            >
+              {item.ctaLabel}
+            </button>
+          </div>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+function QueueSortTh({
+  label,
+  column,
+  sort,
+  setSort,
+  className,
+}: {
+  label: string
+  column: QueueSortKey
+  sort: QueueSort
+  setSort: Dispatch<SetStateAction<QueueSort>>
+  className?: string
+}) {
+  const active = sort.key === column
+  return (
+    <TableHead className={className}>
       <button
-        onClick={onToggle}
-        className={[
-          "flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors",
-          item.done ? "border-chart-3 bg-chart-3 text-white" : "border-input hover:border-foreground",
-        ].join(" ")}
+        type="button"
+        className={cn(
+          "group inline-flex w-full min-w-0 cursor-pointer items-center justify-start gap-1 border-0 bg-transparent px-0 py-1 text-left outline-none transition-colors",
+          active ? "font-medium text-foreground" : "text-muted-foreground hover:text-foreground",
+          "focus-visible:text-foreground focus-visible:underline focus-visible:underline-offset-4",
+        )}
+        onClick={() => setSort((prev) => cycleQueueSort(prev, column))}
       >
-        {item.done && <Check className="h-3 w-3" strokeWidth={3} />}
+        <span className="min-w-0">{label}</span>
+        {active ? (
+          sort.dir === "asc" ? (
+            <ArrowUp className="h-3 w-3 shrink-0 opacity-90" aria-hidden />
+          ) : (
+            <ArrowDown className="h-3 w-3 shrink-0 opacity-90" aria-hidden />
+          )
+        ) : (
+          <ArrowUpDown
+            className="h-3 w-3 shrink-0 opacity-35 transition-opacity group-hover:opacity-60"
+            aria-hidden
+          />
+        )}
       </button>
-      <div className="min-w-0">
-        <div className={["text-sm font-medium text-card-foreground", item.done && "line-through"].filter(Boolean).join(" ")}>
-          {item.title}
+    </TableHead>
+  )
+}
+
+function OperatorTaskTable({
+  sortedVisible,
+  toggle,
+  onOpenGrant,
+  queueSort,
+  setQueueSort,
+}: {
+  sortedVisible: ActionItem[]
+  toggle: (id: string) => void
+  onOpenGrant: (id: string, ctx?: IssueNavigationContext) => void
+  queueSort: QueueSort
+  setQueueSort: Dispatch<SetStateAction<QueueSort>>
+}) {
+  return (
+    <Table
+      containerClassName="px-0 py-0 sm:px-0 sm:py-0"
+      className={cn(
+        "min-w-[720px] text-xs font-normal [&_th]:h-auto [&_th]:min-h-0 [&_th]:py-1.5 [&_th]:font-normal [&_th]:leading-tight",
+      )}
+    >
+      <TableHeader className="[&_tr]:border-b [&_tr]:border-border/25">
+        <TableRow className="border-0 bg-transparent hover:bg-transparent [&>th]:border-0">
+          <TableHead
+            className={cn(
+              AG_OPERATOR_CELL,
+              "w-10 px-3 text-muted-foreground sm:px-4 !h-auto !min-h-0",
+            )}
+          >
+            <span className="sr-only">Done</span>
+          </TableHead>
+          <QueueSortTh
+            label="Item"
+            column="item"
+            sort={queueSort}
+            setSort={setQueueSort}
+            className={cn(
+              AG_OPERATOR_CELL,
+              "min-w-[14rem] whitespace-normal px-3 text-muted-foreground !h-auto !min-h-0",
+            )}
+          />
+          <QueueSortTh
+            label="Grant name"
+            column="grant"
+            sort={queueSort}
+            setSort={setQueueSort}
+            className={cn(AG_OPERATOR_CELL, "min-w-[11rem] px-3 text-muted-foreground !h-auto !min-h-0")}
+          />
+          <QueueSortTh
+            label="Owner"
+            column="owner"
+            sort={queueSort}
+            setSort={setQueueSort}
+            className={cn(AG_OPERATOR_CELL, "px-3 text-muted-foreground !h-auto !min-h-0")}
+          />
+          <QueueSortTh
+            label="Last updated"
+            column="updated"
+            sort={queueSort}
+            setSort={setQueueSort}
+            className={cn(AG_OPERATOR_CELL, "px-3 text-muted-foreground !h-auto !min-h-0")}
+          />
+          <QueueSortTh
+            label="Issue"
+            column="issue"
+            sort={queueSort}
+            setSort={setQueueSort}
+            className={cn(AG_OPERATOR_CELL, "px-3 text-muted-foreground !h-auto !min-h-0")}
+          />
+          <TableHead
+            className={cn(
+              AG_OPERATOR_CELL,
+              "w-[1%] px-3 pr-4 text-right text-muted-foreground sm:pr-6 !h-auto !min-h-0",
+            )}
+          >
+            <span className="sr-only">Action</span>
+          </TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody className="[&_tr]:border-0">
+        {sortedVisible.map((item) => (
+          <OperatorTaskRow
+            key={item.id}
+            item={item}
+            onToggle={() => toggle(item.id)}
+            onOpen={() =>
+              onOpenGrant(item.grantId, {
+                fieldKey: item.highlightFieldKey,
+                fieldLabel: item.highlightFieldLabel,
+                reason: item.highlightReason,
+              })
+            }
+          />
+        ))}
+      </TableBody>
+    </Table>
+  )
+}
+
+function OperatorTaskRow({
+  item,
+  onToggle,
+  onOpen,
+}: {
+  item: ActionItem
+  onToggle: () => void
+  onOpen: () => void
+}) {
+  const mix = useMixAltUi()
+  const threshold = mix?.upcomingThresholdDays ?? 14
+  const snoozedIds = mix?.snoozedIssueIds ?? MIXALT_EMPTY_SNOOZE_IDS
+  const rowSnoozed = Boolean(item.snoozed || snoozedIds.has(item.id))
+  const effectiveUp = isEffectiveUpcoming(item, threshold, snoozedIds)
+  const upcomingOutsideWindow =
+    item.issueCategory === "upcoming" && !item.done && !rowSnoozed && !effectiveUp
+
+  return (
+    <TableRow
+      className={cn(
+        "border-0 bg-transparent transition-none hover:bg-muted/45 dark:hover:bg-muted/35",
+        item.done && "opacity-50",
+        rowSnoozed && "opacity-60",
+      )}
+    >
+      <TableCell className={cn("px-3 py-3.5 sm:px-4")}>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation()
+            onToggle()
+          }}
+          className={[
+            "flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors",
+            item.done ? "border-chart-3 bg-chart-3 text-white" : "border-input hover:border-foreground",
+          ].join(" ")}
+          aria-label={item.done ? "Mark not done" : "Mark done"}
+        >
+          {item.done && <Check className="h-3 w-3" strokeWidth={3} />}
+        </button>
+      </TableCell>
+      <TableCell className={cn(AG_OPERATOR_CELL, "whitespace-normal px-3 py-3.5")}>
+        <div className={cn("flex flex-col gap-0.5", item.done && "line-through")}>
+          <span className="font-semibold text-foreground">{item.itemLabel}</span>
+          <span className="font-normal text-muted-foreground">{item.detail}</span>
         </div>
-        <div className="mt-0.5 flex items-center gap-2 text-[11px] text-muted-foreground">
-          <button onClick={onOpen} className="truncate hover:text-foreground hover:underline">
-            {item.grantTitle}
-          </button>
-          <span>·</span>
-          <StagePill stage={item.stage} className="!py-0 !text-[10px]" />
+      </TableCell>
+      <TableCell className={cn(AG_OPERATOR_CELL, "px-3 py-3.5")}>
+        <button
+          type="button"
+          onClick={onOpen}
+          className={cn(
+            AG_OPERATOR_CELL,
+            "max-w-[18rem] truncate text-left font-medium text-foreground hover:underline",
+          )}
+        >
+          {item.grantTitle}
+        </button>
+      </TableCell>
+      <TableCell className={cn(AG_OPERATOR_CELL, "whitespace-normal px-3 py-3.5")}>
+        <OwnerCell id={item.ownerId} nameClassName={AG_OPERATOR_CELL} />
+      </TableCell>
+      <TableCell className={cn(AG_OPERATOR_CELL, "px-3 py-3.5 tabular-nums")}>{item.lastUpdatedDisplay}</TableCell>
+      <TableCell className="px-3 py-3.5">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <IssueCategoryBadge category={item.issueCategory} />
+          {rowSnoozed ? (
+            <Badge variant="outline" className="text-[10px] font-normal text-muted-foreground">
+              Snoozed
+            </Badge>
+          ) : null}
+          {upcomingOutsideWindow ? (
+            <span className="text-[10px] text-muted-foreground">Outside alert window</span>
+          ) : null}
         </div>
-      </div>
-      <div
-        className={[
-          "min-w-[7rem] max-w-[11rem] shrink-0 text-right text-base font-medium tabular-nums leading-snug sm:min-w-[7.5rem]",
-          urgencyColor,
-        ].join(" ")}
-      >
-        {item.due}
-      </div>
-      <div className="hidden md:block w-20 text-right text-[11px] tabular-nums text-muted-foreground">
-        ${(item.award / 1000).toFixed(0)}K
-      </div>
-      <OwnerAvatar id={item.ownerId} size={22} />
-    </li>
+      </TableCell>
+      <TableCell className="px-3 py-3.5 pr-4 text-right sm:pr-6">
+        <button
+          type="button"
+          onClick={onOpen}
+          className="inline-flex h-7 max-w-[11rem] shrink-0 items-center justify-center truncate rounded-md border border-border bg-background px-2 text-[11px] font-medium text-foreground shadow-xs hover:bg-muted"
+        >
+          {item.ctaLabel}
+        </button>
+      </TableCell>
+    </TableRow>
   )
 }
 

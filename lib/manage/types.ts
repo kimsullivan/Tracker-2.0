@@ -51,18 +51,61 @@ export type Grant = {
   flagged?: boolean
 }
 
+/** Opening My Work issue → grant detail: which field to spotlight */
+export type IssueNavigationContext = {
+  fieldKey: string
+  fieldLabel: string
+  reason: string
+}
+
+export type IssueKind =
+  | "deadline"
+  | "missing_data"
+  | "compliance"
+  | "financial"
+  | "relationship"
+  | "reporting"
+  | "ops"
+
+export type IssueSeverity = "critical" | "high" | "medium" | "low"
+
+/** My Work “Issue” column — categorical chip (matches operator spreadsheet). */
+export type WorkIssueCategory =
+  | "upcoming"
+  | "spend"
+  | "setup"
+  | "inactive"
+  | "overdue"
+  | "missing_data"
+
+/** One row in My Work = one issue (same grant may appear more than once). */
 export type ActionItem = {
   id: string
-  title: string
+  /** Issue column — category chip */
+  issueCategory: WorkIssueCategory
+  /** Item column — short task label */
+  itemLabel: string
+  /** Details column — dates, amounts, notes */
   detail: string
   grantTitle: string
   grantId: string
+  issueKind: IssueKind
+  severity: IssueSeverity
+  highlightFieldKey: string
+  highlightFieldLabel: string
+  highlightReason: string
   stage: Stage
+  /** Sort / urgency helper (days until relevant deadline; negative = overdue) */
   due: string
   daysOut: number
-  award: number
   ownerId: string
+  /** Last updated column */
+  lastUpdatedDisplay: string
+  /** Primary row action */
+  ctaLabel: string
   done?: boolean
+  /** Mix Alt prototype — bulk snooze */
+  snoozed?: boolean
 }
 
 export type Anomaly = {

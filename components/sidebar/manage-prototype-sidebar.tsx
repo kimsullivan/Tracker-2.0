@@ -23,10 +23,13 @@ export function ManagePrototypeSidebar({
   grain,
   onRequestGrain,
   onClearGrant,
+  mixedSavedViewLabels,
 }: {
   grain: Grain
   onRequestGrain: (g: Grain) => void
   onClearGrant: () => void
+  /** Mixed-alt chat agent — surfaced under sidebar chrome */
+  mixedSavedViewLabels?: string[]
 }) {
   const [selectedProject, setSelectedProject] = useState<string | null>("all")
   const [showPinnedSidebar, setShowPinnedSidebar] = useState(false)
@@ -58,17 +61,33 @@ export function ManagePrototypeSidebar({
   )
 
   return (
-    <Sidebar
-      activeTab={PROTOTYPE_SIDEBAR_ACTIVE_TAB}
-      onTabChange={onTabChange}
-      selectedProject={selectedProject}
-      onSelectProject={setSelectedProject}
-      counts={DEFAULT_COUNTS}
-      allProjectsCounts={DEFAULT_COUNTS}
-      showPinnedSidebar={showPinnedSidebar}
-      setShowPinnedSidebar={setShowPinnedSidebar}
-      searchModalOpen={searchModalOpen}
-      onSearchModalOpenChange={setSearchModalOpen}
-    />
+    <div className="flex h-full min-h-0 min-w-0 shrink-0 flex-col bg-background">
+      <div className="flex min-h-0 flex-1 flex-col">
+        <Sidebar
+          activeTab={PROTOTYPE_SIDEBAR_ACTIVE_TAB}
+          onTabChange={onTabChange}
+          selectedProject={selectedProject}
+          onSelectProject={setSelectedProject}
+          counts={DEFAULT_COUNTS}
+          allProjectsCounts={DEFAULT_COUNTS}
+          showPinnedSidebar={showPinnedSidebar}
+          setShowPinnedSidebar={setShowPinnedSidebar}
+          searchModalOpen={searchModalOpen}
+          onSearchModalOpenChange={setSearchModalOpen}
+        />
+      </div>
+      {mixedSavedViewLabels && mixedSavedViewLabels.length > 0 ? (
+        <div className="border-t border-border/70 border-r border-border px-3 py-3">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">My views</p>
+          <ul className="mt-2 space-y-1">
+            {mixedSavedViewLabels.map((label, i) => (
+              <li key={`${label}-${i}`} className="truncate text-[13px] text-foreground" title={label}>
+                {label}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </div>
   )
 }
