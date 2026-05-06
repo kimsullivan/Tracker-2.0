@@ -1,7 +1,17 @@
 "use client"
 
 import type { ReactNode, SVGProps } from "react"
-import { useId, useMemo } from "react"
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react"
 import { Area, AreaChart, Cell, Pie, PieChart, ResponsiveContainer } from "recharts"
 import { cn } from "@/lib/utils"
 import type { FunderType, Grant } from "@/lib/manage/types"
@@ -21,16 +31,119 @@ import { grantMatchesBoardKpiSlice, type BoardKpiSlice } from "@/lib/manage/boar
 export const KPI_CHART_FONT = "var(--font-lato), Lato, ui-sans-serif, system-ui, sans-serif"
 
 /** Matches Recharts Area/Line defaults so donuts / chat sparks feel consistent with win-rate tiles. */
-export const KPI_CHART_ANIMATION_DURATION_MS = 400
-export const KPI_CHART_ANIMATION_EASING = "ease" as const
+export const KPI_CHART_ANIMATION_DURATION_MS = 900
+export const KPI_CHART_ANIMATION_EASING = "ease-out" as const
 
 /** Tailwind-friendly class for width-based KPI bars (pairs with {@link KPI_CHART_ANIMATION_DURATION_MS}). */
 export const KPI_BAR_WIDTH_TRANSITION_CLASS =
-  "transition-[width] duration-[400ms] ease-out motion-reduce:transition-none"
+  "transition-[width] duration-[900ms] ease-out motion-reduce:transition-none"
+
+function subscribeReducedMotion(cb: () => void) {
+  const mq = window.matchMedia("(prefers-reduced-motion: reduce)")
+  mq.addEventListener("change", cb)
+  return () => mq.removeEventListener("change", cb)
+}
+
+export function usePrefersReducedMotion() {
+  return useSyncExternalStore(
+    subscribeReducedMotion,
+    () => window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+    () => false,
+  )
+}
+
+type KpiChartMotion = { chartReady: boolean; reducedMotion: boolean }
+
+const KpiChartMotionContext = createContext<KpiChartMotion>({
+  chartReady: true,
+  reducedMotion: false,
+})
+
+/** Delays Recharts mount animations until after layout so ResponsiveContainer has real size; scopes KPI bar intro. */
+export function KpiChartMotionProvider({ children }: { children: ReactNode }) {
+  const reducedMotion = usePrefersReducedMotion()
+  const [chartReady, setChartReady] = useState(reducedMotion)
+
+  useLayoutEffect(() => {
+    if (reducedMotion) {
+      setChartReady(true)
+      return
+    }
+    setChartReady(false)
+    let cancelled = false
+    const id = requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (!cancelled) setChartReady(true)
+      })
+    })
+    return () => {
+      cancelled = true
+      cancelAnimationFrame(id)
+    }
+  }, [reducedMotion])
+
+  return (
+    <KpiChartMotionContext.Provider value={{ chartReady, reducedMotion }}>
+      {children}
+    </KpiChartMotionContext.Provider>
+  )
+}
+
+export function useKpiChartMotion() {
+  return useContext(KpiChartMotionContext)
+}
+
+/** Width % of an inner bar: 0 → target once `chartReady`, then CSS transition; updates follow without resetting. */
+export function useKpiBarAnimatedWidthPct(targetPct: number) {
+  const { chartReady, reducedMotion } = useKpiChartMotion()
+  const didIntro = useRef(false)
+  const [w, setW] = useState(0)
+
+  useEffect(() => {
+    if (reducedMotion) {
+      setW(targetPct)
+      return
+    }
+    if (!chartReady) {
+      setW(0)
+      return
+    }
+    if (!didIntro.current) {
+      didIntro.current = true
+      setW(0)
+      const id = requestAnimationFrame(() => {
+        requestAnimationFrame(() => setW(targetPct))
+      })
+      return () => cancelAnimationFrame(id)
+    }
+    setW(targetPct)
+  }, [targetPct, reducedMotion, chartReady])
+
+  return w
+}
+
+export function KpiAnimatedBar({
+  widthPct,
+  background,
+  className,
+}: {
+  widthPct: number
+  background: string
+  className?: string
+}) {
+  const w = useKpiBarAnimatedWidthPct(widthPct)
+  return (
+    <div
+      className={cn("h-full min-w-0", KPI_BAR_WIDTH_TRANSITION_CLASS, className)}
+      style={{ width: `${w}%`, background }}
+      aria-hidden
+    />
+  )
+}
 
 /**
- * Mirrors `tokens` + layout from AllGrantsKPITiles.jsx (purple ramp, semantic, typography).
- * Recharts: BarChart · AreaChart (+ Bar · Area · XAxis · YAxis · Cell · ResponsiveContainer · LabelList).
+ * KPI tilechart tokens — mirror globals.css / Operating viz palette.
+ * Funder-type fills: Twilight, Jeans, Amethyst, Golden, Volt (distinct categories).
  */
 export const AG_KPI_TOKENS = {
   bgCard: "#FFFFFF",
@@ -40,27 +153,27 @@ export const AG_KPI_TOKENS = {
   textSecondary: "#5F5E5A",
   textTertiary: "#8E8D87",
   radiusLg: 12,
-  purple50: "#EEEDFE",
-  purple100: "#CECBF6",
-  purple200: "#AFA9EC",
-  purple400: "#7F77DD",
-  purple600: "#534AB7",
-  purple800: "#3C3489",
-  teal600: "#1D9E75",
-  teal800: "#0F6E56",
-  teal50: "#E1F5EE",
-  red600: "#A32D2D",
-  red800: "#791F1F",
-  red50: "#FCEBEB",
+  purple50: "#BAD867",
+  purple100: "#FDCC7A",
+  purple200: "#C2AFE9",
+  purple400: "#6A7FE4",
+  purple600: "#6D6ABC",
+  purple800: "#4A4588",
+  teal600: "#29A37E",
+  teal800: "#1E7A5E",
+  teal50: "#E8F5F0",
+  red600: "#F0857A",
+  red800: "#C45C52",
+  red50: "#FDEDEA",
   gray100: "#D3D1C7",
-  gray400: "#888780",
+  gray400: "#999999",
 } as const
 
 /** Prospects-considered donut: segment order + fills (AllGrantsKPITiles.jsx Tile 1). */
 const PROSPECTS_CONSIDERED_FUNDER_ORDER: readonly FunderType[] = ["Private", "Federal", "Corporate", "State", "Local"]
 const PROSPECTS_FUNDER_COLOR: Record<FunderType, string> = {
-  Private: AG_KPI_TOKENS.purple600,
-  Federal: AG_KPI_TOKENS.purple400,
+  Federal: AG_KPI_TOKENS.purple600,
+  Private: AG_KPI_TOKENS.purple400,
   Corporate: AG_KPI_TOKENS.purple200,
   State: AG_KPI_TOKENS.purple100,
   Local: AG_KPI_TOKENS.purple50,
@@ -128,7 +241,7 @@ export function AllActiveTileShell({ children, shellClassName }: { children: Rea
     <div
       style={{ fontFamily: KPI_CHART_FONT }}
       className={cn(
-        "flex h-[260px] flex-col rounded-[12px] border-[0.5px] p-[18px] [gap:10px]",
+        "flex h-[220px] flex-col rounded-[12px] border-[0.5px] p-[18px] gap-1.5",
         "bg-[color:#FFFFFF] dark:bg-card dark:border-border",
         "border-[rgba(0,0,0,0.08)]",
         shellClassName,
@@ -214,6 +327,7 @@ export function AllActiveDeltaPill({ direction, value }: { direction: "up" | "do
 }
 
 function StaticProspectsConsideredTile({ scope }: { scope: Grant[] }) {
+  const { chartReady, reducedMotion } = useKpiChartMotion()
   const slices = useMemo(
     () => scaleConsideredByFunderToTotal(countConsideredGrantsByFunder(scope), FUNNEL_DISPLAY_CONSIDERED_COUNT),
     [scope],
@@ -237,9 +351,9 @@ function StaticProspectsConsideredTile({ scope }: { scope: Grant[] }) {
       />
       <AllActiveTileHero value={fmtComma(total)} />
 
-      <div className="mt-1 flex min-h-0 flex-1 flex-col">
-        <div className="flex min-h-0 flex-1 items-center gap-[14px]" style={{ marginTop: 4 }}>
-          <div className="relative h-24 w-24 shrink-0 overflow-visible">
+      <div className="-mt-1 flex min-h-0 flex-1 flex-col">
+        <div className="flex min-h-0 flex-1 items-center gap-2">
+          <div className="relative h-20 w-20 shrink-0 overflow-visible">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart tabIndex={-1}>
                 <Pie
@@ -248,13 +362,14 @@ function StaticProspectsConsideredTile({ scope }: { scope: Grant[] }) {
                   nameKey="name"
                   cx="50%"
                   cy="50%"
-                  innerRadius={32}
-                  outerRadius={46}
+                  innerRadius={26}
+                  outerRadius={36}
                   startAngle={90}
                   endAngle={-270}
                   paddingAngle={0}
                   stroke="none"
-                  animationDuration={KPI_CHART_ANIMATION_DURATION_MS}
+                  isAnimationActive={!reducedMotion && chartReady}
+                  animationDuration={reducedMotion ? 0 : KPI_CHART_ANIMATION_DURATION_MS}
                   animationEasing={KPI_CHART_ANIMATION_EASING}
                 >
                   {slices.map((entry, idx) => (
@@ -282,7 +397,7 @@ function StaticProspectsConsideredTile({ scope }: { scope: Grant[] }) {
             </div>
           </div>
 
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-1 overflow-hidden text-[11px]" style={{ fontFamily: KPI_CHART_FONT }}>
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-0 overflow-hidden text-[11px]" style={{ fontFamily: KPI_CHART_FONT }}>
             {slices.map((entry) => (
               <div key={entry.name} className="flex min-w-0 items-center gap-1.5">
                 <span
@@ -344,12 +459,12 @@ function StaticInFlightTile({
       />
       <AllActiveTileHero value={fmtMoney(totalDollarsForHero)} />
 
-      <div className="mt-1 flex min-h-0 flex-1 flex-col justify-center [gap:14px]">
+      <div className="-mt-1 flex min-h-0 flex-1 flex-col justify-center gap-2">
         {rows.map((d) => {
           const widthPct = (d.dollars / totalDollars) * 100
           return (
             <div key={d.type}>
-              <div className="mb-[5px] flex justify-between text-[11px]">
+              <div className="mb-1 flex justify-between text-[11px]">
                 <span style={{ color: AG_KPI_TOKENS.textSecondary }}>
                   {d.type} <span style={{ color: AG_KPI_TOKENS.textTertiary }}>· {d.count}</span>
                 </span>
@@ -361,10 +476,7 @@ function StaticInFlightTile({
                 </span>
               </div>
               <div className="overflow-hidden rounded-[3px]" style={{ height: 6, background: AG_KPI_TOKENS.bgPage }}>
-                <div
-                  className={cn("h-full rounded-[3px]", KPI_BAR_WIDTH_TRANSITION_CLASS)}
-                  style={{ width: `${widthPct}%`, background: d.fill }}
-                />
+                <KpiAnimatedBar widthPct={widthPct} background={d.fill} className="rounded-[3px]" />
               </div>
             </div>
           )
@@ -402,16 +514,16 @@ function StaticAwardedVsLostTile({
         value={awardedDollars >= 1_000_000 ? `$${(awardedDollars / 1_000_000).toFixed(1)}M` : `$${(awardedDollars / 1000).toFixed(0)}K`}
       />
 
-      <div className="mt-1 flex flex-1 flex-col justify-center gap-[14px]">
+      <div className="-mt-1 flex flex-1 flex-col justify-center gap-2">
         <div
-          className="flex overflow-hidden rounded-[4px]"
+          className="flex w-full overflow-hidden rounded-[4px] bg-muted/25"
           style={{ height: 8, gap: 1 }}
         >
-          <div style={{ flex: Math.max(0.001, awardedDollars / total), background: AG_KPI_TOKENS.teal600 }} />
-          <div style={{ flex: Math.max(0.001, lostDollars / total), background: AG_KPI_TOKENS.gray400 }} />
+          <KpiAnimatedBar widthPct={(100 * awardedDollars) / total} background={AG_KPI_TOKENS.teal600} />
+          <KpiAnimatedBar widthPct={(100 * lostDollars) / total} background={AG_KPI_TOKENS.red600} />
         </div>
 
-        <div className="flex flex-col text-[11px]" style={{ gap: 8 }}>
+        <div className="flex flex-col text-[11px] gap-2">
           <div className="flex items-center gap-1.5">
             <span
               className="h-[7px] w-[7px] shrink-0 rounded-[2px]"
@@ -431,7 +543,7 @@ function StaticAwardedVsLostTile({
           <div className="flex items-center gap-1.5">
             <span
               className="h-[7px] w-[7px] shrink-0 rounded-[2px]"
-              style={{ background: AG_KPI_TOKENS.gray400 }}
+              style={{ background: AG_KPI_TOKENS.red600 }}
               aria-hidden
             />
             <span style={{ color: AG_KPI_TOKENS.textSecondary }}>Lost · {fmtComma(lostCount)}</span>
@@ -457,6 +569,7 @@ function StaticWinRateSparkTile({
   winPct: number
   priorPct: number
 }) {
+  const { chartReady, reducedMotion } = useKpiChartMotion()
   const uid = useId().replace(/:/g, "")
   const gradId = `wr-fill-${uid}`
 
@@ -469,7 +582,7 @@ function StaticWinRateSparkTile({
       <AllActiveTileHeader label="Win rate" right={<AllActiveDeltaPill direction={direction} value={deltaAbs} />} />
       <AllActiveTileHero value={`${winPct}%`} caption={`vs ${priorPct}% prior period`} />
 
-      <div className="flex min-h-0 w-full flex-1 flex-col" style={{ marginTop: 4, minHeight: 0 }}>
+      <div className="-mt-1 h-[58px] w-full shrink-0">
         <ResponsiveContainer width="100%" height="100%">
           <AreaChart
             style={{ fontFamily: KPI_CHART_FONT }}
@@ -490,7 +603,8 @@ function StaticWinRateSparkTile({
               fill={`url(#${gradId})`}
               dot={false}
               activeDot={false}
-              animationDuration={KPI_CHART_ANIMATION_DURATION_MS}
+              isAnimationActive={!reducedMotion && chartReady}
+              animationDuration={reducedMotion ? 0 : KPI_CHART_ANIMATION_DURATION_MS}
               animationEasing={KPI_CHART_ANIMATION_EASING}
             />
           </AreaChart>
@@ -504,9 +618,17 @@ function fmtMoney(n: number) {
   return n >= 1_000_000 ? `$${(n / 1_000_000).toFixed(2)}M` : `$${(n / 1_000).toFixed(0)}K`
 }
 
-/** Mixed-alt `PulseStripBridge`: shadow + hover; selection uses muted fills, not rings. */
-export const MIXED_ALT_TILE_CHROME = "shadow-sm transition-shadow hover:bg-muted/15 dark:shadow-sm"
-export const DRILL_ROW_ACTIVE = "bg-muted/55 dark:bg-muted/45"
+/** Mixed-alt KPI cards — outline-led hover; minimal fill so twilight/muted doesn’t read muddy. */
+export const MIXED_ALT_TILE_CHROME =
+  "shadow-sm transition-[background-color,box-shadow] duration-150 hover:bg-muted/[0.05] hover:shadow-md hover:ring-1 hover:ring-inset hover:ring-foreground/10 active:bg-muted/[0.07] dark:shadow-sm dark:hover:bg-muted/[0.06] dark:hover:ring-foreground/14 dark:active:bg-muted/[0.09] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 dark:focus-visible:ring-offset-card"
+
+/** Selected drill row / tile — same footprint as hover rows; 1px inset stroke + light tint. */
+export const DRILL_ROW_ACTIVE =
+  "bg-primary/[0.06] ring-1 ring-inset ring-primary/50 dark:bg-primary/[0.09] dark:ring-primary/55"
+
+/** Inline drill rows: hover mirrors active padding; stroke-forward, not heavy fill. */
+export const KPI_ROW_IDLE_HOVER =
+  "transition-[background-color,box-shadow] hover:bg-muted/[0.05] hover:ring-1 hover:ring-inset hover:ring-foreground/10 active:bg-muted/[0.08] dark:hover:bg-muted/[0.06] dark:hover:ring-foreground/13 dark:active:bg-muted/[0.09]"
 
 /** Board KPI tiles.jsx — compact dollar headline */
 function fmtBoardDollar(n: number): string {
@@ -592,6 +714,7 @@ function BridgeProspectsConsideredTile({
   onDrillFunnelConsidered: () => void
   onDrillFunder: (ft: FunderType) => void
 }) {
+  const { chartReady, reducedMotion } = useKpiChartMotion()
   const slices = useMemo(
     () => scaleConsideredByFunderToTotal(countConsideredGrantsByFunder(scope), FUNNEL_DISPLAY_CONSIDERED_COUNT),
     [scope],
@@ -616,12 +739,17 @@ function BridgeProspectsConsideredTile({
       />
       <AllActiveTileHero value={fmtComma(total)} />
 
-      <div className="mt-1 flex min-h-0 flex-1 flex-col">
-        <div className="flex min-h-0 flex-1 items-center gap-[14px]" style={{ marginTop: 4 }}>
+      <div className="-mt-1 flex min-h-0 flex-1 flex-col">
+        <div className="flex min-h-0 flex-1 items-center gap-2">
           <button
             type="button"
             title='Filter table to "considered" prospects'
-            className="relative h-24 w-24 shrink-0 cursor-pointer rounded-full border-0 bg-transparent p-0 outline-none"
+            className={cn(
+              "relative h-20 w-20 shrink-0 cursor-pointer rounded-full border-0 bg-transparent p-0 outline-none transition-[transform,box-shadow] hover:scale-[1.02] active:scale-[0.98] focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+              funnelConsideredActive
+                ? "shadow-sm ring-1 ring-primary/55 ring-offset-2 ring-offset-background dark:ring-offset-card"
+                : "hover:shadow-sm hover:ring-1 hover:ring-primary/35 hover:ring-offset-2 hover:ring-offset-background dark:hover:ring-offset-card",
+            )}
             onClick={onDrillFunnelConsidered}
           >
             <ResponsiveContainer width="100%" height="100%">
@@ -632,14 +760,15 @@ function BridgeProspectsConsideredTile({
                   nameKey="name"
                   cx="50%"
                   cy="50%"
-                  innerRadius={32}
-                  outerRadius={46}
+                  innerRadius={26}
+                  outerRadius={36}
                   startAngle={90}
                   endAngle={-270}
                   paddingAngle={0}
                   stroke="none"
                   style={{ fontFamily: KPI_CHART_FONT }}
-                  animationDuration={KPI_CHART_ANIMATION_DURATION_MS}
+                  isAnimationActive={!reducedMotion && chartReady}
+                  animationDuration={reducedMotion ? 0 : KPI_CHART_ANIMATION_DURATION_MS}
                   animationEasing={KPI_CHART_ANIMATION_EASING}
                 >
                   {slices.map((entry, idx) => (
@@ -667,7 +796,7 @@ function BridgeProspectsConsideredTile({
             </div>
           </button>
 
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-1 overflow-hidden text-[11px]" style={{ fontFamily: KPI_CHART_FONT }}>
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-0 overflow-hidden text-[11px]" style={{ fontFamily: KPI_CHART_FONT }}>
             {slices.map((entry) => {
               const rowActive = drill?.kind === "funder" && drill.funderType === entry.funderType
               return (
@@ -677,8 +806,8 @@ function BridgeProspectsConsideredTile({
                   title={`Filter table to ${entry.name}`}
                   onClick={() => onDrillFunder(entry.funderType)}
                   className={cn(
-                    "flex min-w-0 items-center gap-1.5 rounded-md px-0.5 py-0.5 text-left font-inherit outline-none transition-colors",
-                    rowActive ? DRILL_ROW_ACTIVE : "hover:bg-muted/15",
+                    "flex min-w-0 items-center gap-1.5 rounded-md px-2 py-1 text-left font-inherit outline-none transition-[background-color,box-shadow]",
+                    rowActive ? DRILL_ROW_ACTIVE : KPI_ROW_IDLE_HOVER,
                   )}
                 >
                   <span className="h-[7px] w-[7px] shrink-0 rounded-[2px]" style={{ background: entry.color }} aria-hidden />
@@ -742,7 +871,7 @@ function BridgeInFlightTile({
         value={`$${(denom / 1_000_000).toFixed(1)}M`}
       />
 
-      <div className="mt-1 flex min-h-0 flex-1 flex-col justify-center [gap:14px]">
+      <div className="-mt-1 flex min-h-0 flex-1 flex-col justify-center gap-2">
         {rows.map((d) => {
           const widthPct = (d.dollars / totalDollars) * 100
           const rowActive = drill?.kind === "inFlight" && drill.slice === d.slice
@@ -753,11 +882,11 @@ function BridgeInFlightTile({
               title={`Filter table to ${d.type}`}
               onClick={() => onDrillInFlight(d.slice)}
               className={cn(
-                "-mx-1 w-[calc(100%+8px)] rounded-md px-1 text-left font-inherit outline-none transition-colors",
-                rowActive ? DRILL_ROW_ACTIVE : "hover:bg-muted/15",
+                "-mx-2 w-[calc(100%+16px)] rounded-md px-2 py-1 text-left font-inherit outline-none transition-[background-color,box-shadow]",
+                rowActive ? DRILL_ROW_ACTIVE : KPI_ROW_IDLE_HOVER,
               )}
             >
-              <div className="mb-[5px] flex justify-between text-[11px]">
+              <div className="mb-1 flex justify-between text-[11px]">
                 <span style={{ color: AG_KPI_TOKENS.textSecondary }}>
                   {d.type}{" "}
                   <span style={{ color: AG_KPI_TOKENS.textTertiary }}>· {d.count}</span>
@@ -770,11 +899,7 @@ function BridgeInFlightTile({
                 </span>
               </div>
               <div className="overflow-hidden rounded-[3px]" style={{ height: 6, background: AG_KPI_TOKENS.bgPage }}>
-                <div
-                  className={cn("h-full rounded-[3px]", KPI_BAR_WIDTH_TRANSITION_CLASS)}
-                  style={{ width: `${widthPct}%`, background: d.fill }}
-                  aria-hidden
-                />
+                <KpiAnimatedBar widthPct={widthPct} background={d.fill} className="rounded-[3px]" />
               </div>
             </button>
           )
@@ -817,19 +942,20 @@ function BridgeAwardedVsLostTile({
       />
       <AllActiveTileHero value={heroAwarded} />
 
-      <div className="mt-1 flex flex-1 flex-col justify-center gap-[14px]">
-        <div className="flex overflow-hidden rounded-[4px]" style={{ height: 8, gap: 1 }}>
-          <div style={{ flex: awardedDollars / total, background: AG_KPI_TOKENS.teal600 }} />
-          <div style={{ flex: lostDollars / total, background: AG_KPI_TOKENS.gray400 }} />
+      <div className="-mt-1 flex flex-1 flex-col justify-center gap-2">
+        <div className="flex w-full overflow-hidden rounded-[4px] bg-muted/25" style={{ height: 8, gap: 1 }}>
+          <KpiAnimatedBar widthPct={(100 * awardedDollars) / total} background={AG_KPI_TOKENS.teal600} />
+          <KpiAnimatedBar widthPct={(100 * lostDollars) / total} background={AG_KPI_TOKENS.red600} />
         </div>
 
-        <div className="flex flex-col text-[11px]" style={{ gap: 8 }}>
+        <div className="flex flex-col text-[11px] gap-2">
           <button
             type="button"
             title="Filter to awarded"
             onClick={() => onDrillClosed("awarded")}
             className={cn(
-              "flex w-full items-center gap-1.5 rounded-md px-0.5 py-0.5 text-left font-inherit outline-none transition-colors hover:bg-muted/25",
+              "flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left font-inherit outline-none transition-[background-color,box-shadow]",
+              KPI_ROW_IDLE_HOVER,
               drill?.kind === "closed" && drill.outcome === "awarded" && DRILL_ROW_ACTIVE,
             )}
           >
@@ -847,11 +973,12 @@ function BridgeAwardedVsLostTile({
             title="Filter to lost / declined"
             onClick={() => onDrillClosed("lost")}
             className={cn(
-              "flex w-full items-center gap-1.5 rounded-md px-0.5 py-0.5 text-left font-inherit outline-none transition-colors hover:bg-muted/25",
+              "flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left font-inherit outline-none transition-[background-color,box-shadow]",
+              KPI_ROW_IDLE_HOVER,
               drill?.kind === "closed" && drill.outcome === "lost" && DRILL_ROW_ACTIVE,
             )}
           >
-            <span className="h-[7px] w-[7px] shrink-0 rounded-[2px]" style={{ background: AG_KPI_TOKENS.gray400 }} aria-hidden />
+            <span className="h-[7px] w-[7px] shrink-0 rounded-[2px]" style={{ background: AG_KPI_TOKENS.red600 }} aria-hidden />
             <span style={{ color: AG_KPI_TOKENS.textSecondary }}>Lost · {fmtComma(lostCount)}</span>
             <span className="ml-auto font-bold tabular-nums dark:text-muted-foreground" style={{ color: AG_KPI_TOKENS.textTertiary }}>
               {lostDollars >= 1_000_000 ? `$${(lostDollars / 1_000_000).toFixed(1)}M` : `$${(lostDollars / 1000).toFixed(0)}K`}
@@ -874,6 +1001,7 @@ function BridgeWinRateSparkTile({
   priorPct: number
   onDrillWinrate: () => void
 }) {
+  const { chartReady, reducedMotion } = useKpiChartMotion()
   const uid = useId().replace(/:/g, "")
   const gradId = `wr-fill-br-${uid}`
   const deltaPts = winPct - priorPct
@@ -888,7 +1016,7 @@ function BridgeWinRateSparkTile({
       onClick={onDrillWinrate}
       style={{ fontFamily: KPI_CHART_FONT }}
       className={cn(
-        "flex h-[260px] w-full flex-col rounded-[12px] border-[0.5px] p-[18px] text-left [gap:10px] outline-none",
+        "flex h-[220px] w-full flex-col rounded-[12px] border-[0.5px] p-[18px] text-left gap-1.5 outline-none",
         "border-[rgba(0,0,0,0.08)] bg-[color:#FFFFFF] dark:border-border dark:bg-card",
         MIXED_ALT_TILE_CHROME,
         winrateActive && DRILL_ROW_ACTIVE,
@@ -897,7 +1025,7 @@ function BridgeWinRateSparkTile({
       <AllActiveTileHeader label="Win rate" right={<AllActiveDeltaPill direction={direction} value={deltaAbs} />} />
       <AllActiveTileHero value={`${winPct}%`} caption={`vs ${priorPct}% prior period`} />
 
-      <div className="flex min-h-0 w-full flex-1 flex-col" style={{ marginTop: 4, minHeight: 0 }}>
+      <div className="-mt-1 h-[58px] w-full shrink-0">
         <ResponsiveContainer width="100%" height="100%">
           <AreaChart
             style={{ fontFamily: KPI_CHART_FONT }}
@@ -918,7 +1046,8 @@ function BridgeWinRateSparkTile({
               fill={`url(#${gradId})`}
               dot={false}
               activeDot={false}
-              animationDuration={KPI_CHART_ANIMATION_DURATION_MS}
+              isAnimationActive={!reducedMotion && chartReady}
+              animationDuration={reducedMotion ? 0 : KPI_CHART_ANIMATION_DURATION_MS}
               animationEasing={KPI_CHART_ANIMATION_EASING}
             />
           </AreaChart>
@@ -928,7 +1057,7 @@ function BridgeWinRateSparkTile({
   )
 }
 
-export function PulseStripBridgeRecharts(props: {
+function PulseStripBridgeRechartsInner(props: {
   baseScope: Grant[]
   drill: KpiDrill | null
   onDrill: (next: KpiDrill | null) => void
@@ -1040,12 +1169,25 @@ export function PulseStripBridgeRecharts(props: {
   )
 }
 
-/** Template 2 — Board / Leadership: BoardKPITiles.jsx visuals + live aggregates & board-slice drills. */
-export function PulseStripBoardLeadership(props: {
+export function PulseStripBridgeRecharts(props: {
   baseScope: Grant[]
   drill: KpiDrill | null
   onDrill: (next: KpiDrill | null) => void
 }) {
+  return (
+    <KpiChartMotionProvider>
+      <PulseStripBridgeRechartsInner {...props} />
+    </KpiChartMotionProvider>
+  )
+}
+
+/** Template 2 — Board / Leadership: BoardKPITiles.jsx visuals + live aggregates & board-slice drills. */
+function PulseStripBoardLeadershipInner(props: {
+  baseScope: Grant[]
+  drill: KpiDrill | null
+  onDrill: (next: KpiDrill | null) => void
+}) {
+  const { chartReady, reducedMotion } = useKpiChartMotion()
   const { baseScope, drill, onDrill } = props
   const aggregateScope = baseScope
 
@@ -1143,7 +1285,7 @@ export function PulseStripBoardLeadership(props: {
           caption={`Across ${pipelineCount} grants in motion`}
         />
 
-        <div className="mt-1 flex min-h-0 flex-1 flex-col justify-center [gap:14px]" style={{ marginTop: 4 }}>
+        <div className="-mt-1 flex min-h-0 flex-1 flex-col justify-center gap-2">
           {(
             [
               {
@@ -1172,12 +1314,12 @@ export function PulseStripBoardLeadership(props: {
                 title={`Filter table — ${row.label}`}
                 onClick={() => drillBoard(row.slice)}
                 className={cn(
-                  "-mx-1 w-[calc(100%+8px)] rounded-md px-1 text-left font-inherit outline-none transition-colors",
-                  row.active ? DRILL_ROW_ACTIVE : "hover:bg-muted/15",
+                  "-mx-2 w-[calc(100%+16px)] rounded-md px-2 py-1 text-left font-inherit outline-none transition-[background-color,box-shadow]",
+                  row.active ? DRILL_ROW_ACTIVE : KPI_ROW_IDLE_HOVER,
                 )}
                 style={{ fontFamily: KPI_CHART_FONT }}
               >
-                <div className="mb-[5px] flex justify-between text-[11px]">
+                <div className="mb-1 flex justify-between text-[11px]">
                   <span style={{ color: AG_KPI_TOKENS.textSecondary }}>
                     {row.label}{" "}
                     <span style={{ color: AG_KPI_TOKENS.textTertiary }}>· {row.count}</span>
@@ -1190,11 +1332,7 @@ export function PulseStripBoardLeadership(props: {
                   </span>
                 </div>
                 <div className="overflow-hidden rounded-[3px]" style={{ height: 6, background: AG_KPI_TOKENS.bgPage }}>
-                  <div
-                    className={cn("h-full rounded-[3px]", KPI_BAR_WIDTH_TRANSITION_CLASS)}
-                    style={{ width: `${widthPct}%`, background: row.fill }}
-                    aria-hidden
-                  />
+                  <KpiAnimatedBar widthPct={widthPct} background={row.fill} className="rounded-[3px]" />
                 </div>
               </button>
             )
@@ -1209,7 +1347,7 @@ export function PulseStripBoardLeadership(props: {
         onClick={() => drillBoard("awarded")}
         style={{ fontFamily: KPI_CHART_FONT }}
         className={cn(
-          "flex h-[260px] w-full flex-col rounded-[12px] border-[0.5px] p-[18px] text-left [gap:10px] outline-none",
+          "flex h-[220px] w-full flex-col rounded-[12px] border-[0.5px] p-[18px] text-left gap-1.5 outline-none",
           "border-[rgba(0,0,0,0.08)] bg-[color:#FFFFFF] dark:border-border dark:bg-card",
           MIXED_ALT_TILE_CHROME,
           awardedActive && DRILL_ROW_ACTIVE,
@@ -1221,7 +1359,7 @@ export function PulseStripBoardLeadership(props: {
         />
         <AllActiveTileHero value={fmtBoardDollar(awardedSum)} caption={`Across ${awarded.length} grants this year`} />
 
-        <div className="flex min-h-0 w-full flex-1 flex-col" style={{ marginTop: 4, minHeight: 0 }}>
+        <div className="-mt-1 h-[58px] w-full shrink-0">
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart
               style={{ fontFamily: KPI_CHART_FONT }}
@@ -1242,7 +1380,8 @@ export function PulseStripBoardLeadership(props: {
                 fill={`url(#${gradAwarded})`}
                 dot={false}
                 activeDot={false}
-                animationDuration={KPI_CHART_ANIMATION_DURATION_MS}
+                isAnimationActive={!reducedMotion && chartReady}
+                animationDuration={reducedMotion ? 0 : KPI_CHART_ANIMATION_DURATION_MS}
                 animationEasing={KPI_CHART_ANIMATION_EASING}
               />
             </AreaChart>
@@ -1262,19 +1401,20 @@ export function PulseStripBoardLeadership(props: {
         />
         <AllActiveTileHero value={fmtBoardDollar(pursuedTotal)} caption="Total pursued this year" />
 
-        <div className="mt-1 flex flex-1 flex-col justify-center [gap:14px]" style={{ marginTop: 4 }}>
-          <div className="flex overflow-hidden rounded-[4px]" style={{ height: 8, gap: 1 }}>
-            <div style={{ flex: awardedSum / pursuedDenom, background: AG_KPI_TOKENS.teal600 }} />
-            <div style={{ flex: declinedSum / pursuedDenom, background: AG_KPI_TOKENS.gray400 }} />
+        <div className="-mt-1 flex flex-1 flex-col justify-center gap-2">
+          <div className="flex w-full overflow-hidden rounded-[4px] bg-muted/25" style={{ height: 8, gap: 1 }}>
+            <KpiAnimatedBar widthPct={(100 * awardedSum) / pursuedDenom} background={AG_KPI_TOKENS.teal600} />
+            <KpiAnimatedBar widthPct={(100 * declinedSum) / pursuedDenom} background={AG_KPI_TOKENS.red600} />
           </div>
 
-          <div className="flex flex-col text-[11px]" style={{ gap: 8 }}>
+          <div className="flex flex-col text-[11px] gap-2">
             <button
               type="button"
               title="Filter to awarded"
               onClick={() => drillBoard("awarded")}
               className={cn(
-                "flex w-full items-center gap-1.5 rounded-md px-0.5 py-0.5 text-left font-inherit outline-none transition-colors hover:bg-muted/25",
+                "flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left font-inherit outline-none transition-[background-color,box-shadow]",
+                KPI_ROW_IDLE_HOVER,
                 drill?.kind === "board" && drill.slice === "awarded" && DRILL_ROW_ACTIVE,
               )}
               style={{ fontFamily: KPI_CHART_FONT }}
@@ -1293,12 +1433,13 @@ export function PulseStripBoardLeadership(props: {
               title="Filter to not funded"
               onClick={() => drillBoard("declined")}
               className={cn(
-                "flex w-full items-center gap-1.5 rounded-md px-0.5 py-0.5 text-left font-inherit outline-none transition-colors hover:bg-muted/25",
+                "flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left font-inherit outline-none transition-[background-color,box-shadow]",
+                KPI_ROW_IDLE_HOVER,
                 drill?.kind === "board" && drill.slice === "declined" && DRILL_ROW_ACTIVE,
               )}
               style={{ fontFamily: KPI_CHART_FONT }}
             >
-              <span className="h-[7px] w-[7px] shrink-0 rounded-[2px]" style={{ background: AG_KPI_TOKENS.gray400 }} aria-hidden />
+              <span className="h-[7px] w-[7px] shrink-0 rounded-[2px]" style={{ background: AG_KPI_TOKENS.red600 }} aria-hidden />
               <span style={{ color: AG_KPI_TOKENS.textSecondary }}>Not funded · {fmtComma(declined.length)}</span>
               <span className="ml-auto font-bold tabular-nums dark:text-muted-foreground" style={{ color: AG_KPI_TOKENS.textTertiary }}>
                 {fmtBoardDollar(declinedSum)}
@@ -1315,7 +1456,7 @@ export function PulseStripBoardLeadership(props: {
         onClick={drillWinrate}
         style={{ fontFamily: KPI_CHART_FONT }}
         className={cn(
-          "flex h-[260px] w-full flex-col rounded-[12px] border-[0.5px] p-[18px] text-left [gap:10px] outline-none",
+          "flex h-[220px] w-full flex-col rounded-[12px] border-[0.5px] p-[18px] text-left gap-1.5 outline-none",
           "border-[rgba(0,0,0,0.08)] bg-[color:#FFFFFF] dark:border-border dark:bg-card",
           MIXED_ALT_TILE_CHROME,
           winrateActive && DRILL_ROW_ACTIVE,
@@ -1327,7 +1468,7 @@ export function PulseStripBoardLeadership(props: {
         />
         <AllActiveTileHero value={`${winDollarPct}%`} caption={`vs ${priorWinPct}% prior period`} />
 
-        <div className="flex min-h-0 w-full flex-1 flex-col" style={{ marginTop: 4, minHeight: 0 }}>
+        <div className="-mt-1 h-[58px] w-full shrink-0">
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart
               style={{ fontFamily: KPI_CHART_FONT }}
@@ -1348,7 +1489,8 @@ export function PulseStripBoardLeadership(props: {
                 fill={`url(#${gradWin})`}
                 dot={false}
                 activeDot={false}
-                animationDuration={KPI_CHART_ANIMATION_DURATION_MS}
+                isAnimationActive={!reducedMotion && chartReady}
+                animationDuration={reducedMotion ? 0 : KPI_CHART_ANIMATION_DURATION_MS}
                 animationEasing={KPI_CHART_ANIMATION_EASING}
               />
             </AreaChart>
@@ -1359,8 +1501,20 @@ export function PulseStripBoardLeadership(props: {
   )
 }
 
+export function PulseStripBoardLeadership(props: {
+  baseScope: Grant[]
+  drill: KpiDrill | null
+  onDrill: (next: KpiDrill | null) => void
+}) {
+  return (
+    <KpiChartMotionProvider>
+      <PulseStripBoardLeadershipInner {...props} />
+    </KpiChartMotionProvider>
+  )
+}
+
 /** Static All grants KPI row ("All active" Mixed branch) — AllGrants KPI tiles prototype visuals; non-drilling. */
-export function PulseStripRechartsStatic() {
+function PulseStripRechartsStaticInner() {
   const displayScope = useMemo(
     () => grants.filter((g) => g.stage !== "Closed" && g.stage !== "Declined"),
     [],
@@ -1429,5 +1583,13 @@ export function PulseStripRechartsStatic() {
       />
       <StaticWinRateSparkTile winPct={winPct} priorPct={priorWinPct} />
     </div>
+  )
+}
+
+export function PulseStripRechartsStatic() {
+  return (
+    <KpiChartMotionProvider>
+      <PulseStripRechartsStaticInner />
+    </KpiChartMotionProvider>
   )
 }

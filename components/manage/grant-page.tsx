@@ -5,11 +5,12 @@ import { grants, team } from "@/lib/manage/data"
 import type { IssueNavigationContext } from "@/lib/manage/types"
 import { StagePill } from "./status-pill"
 import { OwnerAvatar } from "./owner-avatar"
-import { ArrowRight, Check, FileText, MoreHorizontal, Plus, Sparkles, X } from "lucide-react"
+import { ArrowRight, Check, FileText, MoreHorizontal, Plus, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
+import { FilledSparkle } from "@/components/ui/filled-sparkle"
 
 const TABS = ["Work", "Notes", "Applications", "Opportunity", "Financials", "Documents"] as const
 type Tab = (typeof TABS)[number]
@@ -370,7 +371,7 @@ function WorkTab({ grantId: _grantId, highlightKey }: { grantId: string; highlig
         </div>
         <div className="rounded-xl border border-primary/20 bg-primary/5 p-3 space-y-2">
           <div className="flex items-center gap-1.5 text-xs font-semibold text-primary">
-            <Sparkles className="h-3.5 w-3.5" />
+            <FilledSparkle className="h-3.5 w-3.5 text-primary" />
             Agent suggestions
           </div>
           <p className="text-[11px] leading-relaxed text-foreground">

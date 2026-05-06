@@ -28,32 +28,35 @@
   --shadow-2xs: 0px 4px 24px -1px rgb(2 1 6 / 0.1);
 
   --card: #ffffff;
-  --ring: #5a56b3;
+  --ring: #6d6abc;
   --input: #e4e7e5;
   --muted: #f1f1f2;
   --accent: #f1f1f9;
   --border: #d7d7d7;
-  /* Data viz: cool teal → cyan → blue → indigo (categorical + harmony with primary) */
-  --chart-1: #7189d9;
-  --chart-2: #2fa394;
-  --chart-3: #3d8bd4;
-  --chart-4: #d9a23e;
-  --chart-5: #9b8ad4;
-  /* Sequential ramp for bars / pipeline (light surfaces) */
-  --viz-ramp-1: hsl(168 38% 88%);
-  --viz-ramp-2: hsl(188 40% 82%);
-  --viz-ramp-3: hsl(208 42% 76%);
-  --viz-ramp-4: hsl(228 44% 68%);
-  --viz-ramp-5: hsl(248 46% 58%);
-  --viz-ramp-6: hsl(262 48% 48%);
+  /*
+   * Data viz (Operating palette)
+   * Twilight #6D6ABC · Aqua #29A37E · Persimmon #F0857A · Jeans #6A7FE4 · Golden #FDCC7A · Amethyst #C2AFE9 · Volt #BAD867 · Vanilla #C9782A · Neutral #999999
+   */
+  --chart-1: #6d6abc;
+  --chart-2: #29a37e;
+  --chart-3: #6a7fe4;
+  --chart-4: #f0857a;
+  --chart-5: #c2afe9;
+  /* Pipeline by stage: Volt → Golden → Amethyst → Jeans → Twilight → Aqua (win) */
+  --viz-ramp-1: #bad867;
+  --viz-ramp-2: #fdcc7a;
+  --viz-ramp-3: #c2afe9;
+  --viz-ramp-4: #6a7fe4;
+  --viz-ramp-5: #6d6abc;
+  --viz-ramp-6: #29a37e;
   --popover: #ffffff;
-  --primary: #5a56b3;
+  --primary: #6d6abc;
   --sidebar: #ffffff;
   --secondary: #f1f1f9;
   --background: #ffffff;
   --foreground: #090830;
   --destructive: #ef4444;
-  --sidebar-ring: #5a56b3;
+  --sidebar-ring: #6d6abc;
   --sidebar-accent: #f1f1f9;
   --sidebar-border: #f1f1f9;
   --card-foreground: #090830;
@@ -76,17 +79,17 @@
   --muted: #1f3325;
   --accent: #2b4d31;
   --border: #1f3325;
-  --chart-1: #9ca8e8;
-  --chart-2: #5ec4b4;
-  --chart-3: #6bb3f0;
-  --chart-4: #f0c14d;
-  --chart-5: #b8a9e8;
-  --viz-ramp-1: hsl(168 28% 22%);
-  --viz-ramp-2: hsl(195 30% 26%);
-  --viz-ramp-3: hsl(215 32% 32%);
-  --viz-ramp-4: hsl(235 34% 38%);
-  --viz-ramp-5: hsl(252 36% 46%);
-  --viz-ramp-6: hsl(262 38% 54%);
+  --chart-1: #a8a4e6;
+  --chart-2: #4bc09a;
+  --chart-3: #8b9af0;
+  --chart-4: #f5a097;
+  --chart-5: #d4c2f0;
+  --viz-ramp-1: #c8db7a;
+  --viz-ramp-2: #ffd98a;
+  --viz-ramp-3: #d4c2f0;
+  --viz-ramp-4: #8b9af0;
+  --viz-ramp-5: #a8a4e6;
+  --viz-ramp-6: #4bc09a;
   --popover: #111c13;
   --primary: #e1f4df;
   --sidebar: #0a120c;
@@ -198,11 +201,11 @@
   --color-twilight-100: #ebe9f7;
   --color-twilight-200: #d9d5ef;
   --color-twilight-250: #cdc8e8;
-  --color-twilight-300: #5a56b3;
-  --color-twilight-350: #3d3a8a;
-  --color-persimmon-400: #f97316;
-  --color-persimmon-500: #ea580c;
-  --color-persimmon-700: #c2410c;
+  --color-twilight-300: #6d6abc;
+  --color-twilight-350: #4a4588;
+  --color-persimmon-400: #f0857a;
+  --color-persimmon-500: #e06b60;
+  --color-persimmon-700: #b8544a;
   --color-jazzy-400: #818cf8;
   --color-azure-50: #eff6ff;
   --color-azure-300: #93c5fd;

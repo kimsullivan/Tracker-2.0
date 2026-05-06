@@ -2,7 +2,7 @@
 
 import { Suspense, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
-import { Sparkles } from "lucide-react"
+import { FilledSparkle } from "@/components/ui/filled-sparkle"
 import { TopBar } from "@/components/manage/top-bar"
 import { GrainBar, type Grain } from "@/components/manage/grain-bar"
 import { CommandCenter } from "@/components/manage/command-center"
@@ -130,7 +130,7 @@ function OperatorAllGrants() {
             </div>
           ) : (
             <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col gap-6 p-6 md:flex-row">
-              <div className="shadow-bleed-scroll order-1 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+              <div className="shadow-bleed-scroll relative z-0 order-1 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
                 <AllGrants
                   onOpenGrant={openGrant}
                   variant="operator"
@@ -139,7 +139,7 @@ function OperatorAllGrants() {
                 />
               </div>
               {operatorChatOpen ? (
-                <div className="operator-chat-enter order-2 flex h-[min(42vh,26rem)] max-h-[480px] min-h-[220px] w-full shrink-0 flex-col overflow-visible rounded-xl border border-twilight-200 bg-white shadow-[0_14px_44px_-10px_rgba(61,58,138,0.22)] md:h-full md:max-h-none md:min-h-0 md:w-[min(26rem,34vw)] md:max-w-[26rem] md:shrink-0 dark:border-twilight-350/35 dark:shadow-[0_18px_56px_-12px_rgba(61,58,138,0.42)]">
+                <div className="operator-chat-enter relative z-[70] order-2 flex h-[min(42vh,26rem)] max-h-[480px] min-h-[220px] w-full shrink-0 flex-col overflow-visible rounded-xl border border-twilight-200 bg-white shadow-[0_14px_44px_-10px_rgba(61,58,138,0.22)] md:h-full md:max-h-none md:min-h-0 md:w-[min(26rem,34vw)] md:max-w-[26rem] md:shrink-0 dark:border-twilight-350/35 dark:shadow-[0_18px_56px_-12px_rgba(61,58,138,0.42)]">
                   <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl">
                   <ChatPanelStandalone
                     variant="operator"
@@ -169,7 +169,7 @@ function OperatorAllGrants() {
             }}
             aria-label="Open operator chat"
           >
-            <Sparkles className="h-5 w-5 text-primary-foreground" strokeWidth={1.75} aria-hidden />
+            <FilledSparkle className="h-5 w-5 text-primary-foreground" aria-hidden />
             <span className="absolute -top-1 -right-1 h-3 w-3 rounded-full bg-chart-3 ring-2 ring-background" />
           </button>
         ) : null}

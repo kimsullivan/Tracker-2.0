@@ -4,7 +4,7 @@ import { boardStageLabel } from "@/lib/manage/board-report"
 /** Stage badge colors aligned to portfolio tracker reference (pastel fill + saturated text, AA-friendly) */
 const stageStyle: Record<Stage, string> = {
   Researching:
-    "bg-amber-200 text-amber-950 dark:bg-amber-700/90 dark:text-amber-50",
+    "bg-amber-100 text-amber-950 dark:bg-amber-800/75 dark:text-amber-50",
   Planned: "bg-sky-50 text-sky-950 dark:bg-sky-950/40 dark:text-sky-100",
   "LOI In Progress":
     "bg-fuchsia-50 text-fuchsia-900 dark:bg-fuchsia-950/45 dark:text-fuchsia-100",

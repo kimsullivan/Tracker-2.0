@@ -585,7 +585,31 @@ export const grants: Grant[] = [
     renewalLikelihood: "Unknown",
     flagged: true,
   },
+  {
+    id: "G-2026-RAC1",
+    title: "After-School Literacy Pilot · Block Grant",
+    funder: "Racine Community Foundation",
+    funderType: "Local",
+    stage: "Awarded - Active",
+    nextAction: "Accelerate draw schedule to correct underspend pace",
+    deadline: "2026-12-15",
+    daysToDeadline: 223,
+    award: 185000,
+    weighted: 185000,
+    ownerId: "elizabeth",
+    cycle: "2026",
+    fundingSource: "Community Impact — Youth Education",
+    period: "01/01/26 — 12/31/26",
+    lastUpdated: "today",
+    projectGroup: "Capacity",
+    priority: "P1",
+    renewalLikelihood: "Medium",
+    flagged: true,
+  },
 ]
+
+/** Prototype grant id for Racine underspend Q&A + `mixalt://grant/...` from chat */
+export const RACINE_COMMUNITY_FOUNDATION_GRANT_ID = "G-2026-RAC1" as const
 
 export const actionQueue: ActionItem[] = [
   {

@@ -1,10 +1,11 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
-import { ArrowUp, Sparkles, X } from "lucide-react"
+import { ArrowUp, X } from "lucide-react"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
+import { FilledSparkle } from "@/components/ui/filled-sparkle"
 import { Markdown } from "@/components/ui/markdown"
 import {
   PromptInput,
@@ -20,6 +21,7 @@ import {
 } from "@/components/manage/chat-inline-viz"
 import {
   mixAltOverspendSpendCharts,
+  mixAltRacineGrantFollowUp,
   mixAltUnderspendSpendCharts,
   type MixAltAgentTurn,
   type MixAltEffect,
@@ -47,6 +49,10 @@ const SUGGESTIONS = [
   "Which grants are at risk this quarter?",
   "Reassign Maria's overflow",
 ]
+
+/** First message for manage / mixed-shell embedded assistant (Elizabeth operator persona). */
+export const ELIZABETH_GRANTS_ASSISTANT_INTRO =
+  "Hi Elizabeth — I'm here to help manage the busywork behind your grants pipeline. Need to review deadlines, tidy up issues, export data, or narrow results? Just ask."
 
 const INITIAL_ASSISTANT_MD = `Morning, Maria. The portfolio is roughly on track — pipeline weighted at **$2.91M** (down 4.2% week-over-week), win rate at 38% (+6 pts). The one thing that should jump first: **Hartford burn is 18% over plan** on DPP Y2.`
 
@@ -105,6 +111,19 @@ function defaultManageInitialMessages(): StandaloneAgentMessage[] {
 /** First thread + chips for the default manage / command-center assistant (Maria morning brief). */
 export function getManageAssistantInitialMessages(): StandaloneAgentMessage[] {
   return defaultManageInitialMessages()
+}
+
+/** Grants assistant intro for mixed prototypes (Elizabeth, plain text — no KPI roll-up). */
+export function getElizabethAssistantInitialMessages(): StandaloneAgentMessage[] {
+  return [
+    {
+      id: "ea0",
+      role: "agent",
+      markdown: false,
+      at: Date.now(),
+      body: ELIZABETH_GRANTS_ASSISTANT_INTRO,
+    },
+  ]
 }
 
 export function getManageAssistantSuggestions(): string[] {
@@ -255,6 +274,79 @@ function StreamingAssistantMarkdown({
   return (
     <div className="relative min-w-0">
       <Markdown className={className}>{visible}</Markdown>
+      {active ? (
+        <span
+          className="ml-px inline-block h-[1em] w-[2px] translate-y-px rounded-full bg-primary/45 align-middle"
+          aria-hidden
+        />
+      ) : null}
+    </div>
+  )
+}
+
+/** Same rAF reveal as markdown stream, for `scriptedAgentPlainText` replies (no ** parsing). */
+function StreamingAssistantPlain({
+  text,
+  className,
+  onProgress,
+  onComplete,
+  maxStreamMs,
+}: {
+  text: string
+  className?: string
+  onProgress?: () => void
+  onComplete?: () => void
+  maxStreamMs?: number
+}) {
+  const [visible, setVisible] = useState("")
+  const [active, setActive] = useState(true)
+  const onProgressRef = useRef(onProgress)
+  const onCompleteRef = useRef(onComplete)
+  onProgressRef.current = onProgress
+  onCompleteRef.current = onComplete
+
+  useEffect(() => {
+    let cancelled = false
+    let rafId = 0
+    const tokens = text.split(/(\s+)/)
+    const n = tokens.length
+    setVisible("")
+    setActive(true)
+
+    const duration = streamDurationForTokens(n, maxStreamMs)
+    const t0 = performance.now()
+    let lastProgress = 0
+
+    const frame = (now: number) => {
+      if (cancelled) return
+      const elapsed = now - t0
+      const linearT = Math.min(1, elapsed / duration)
+      const t = linearT * (2 - linearT)
+      const i = Math.max(0, Math.ceil(t * n))
+      setVisible(tokens.slice(0, i).join(""))
+      if (now - lastProgress > 90) {
+        lastProgress = now
+        onProgressRef.current?.()
+      }
+      if (linearT < 1) {
+        rafId = requestAnimationFrame(frame)
+      } else {
+        onProgressRef.current?.()
+        setActive(false)
+        onCompleteRef.current?.()
+      }
+    }
+
+    rafId = requestAnimationFrame(frame)
+    return () => {
+      cancelled = true
+      cancelAnimationFrame(rafId)
+    }
+  }, [text, maxStreamMs])
+
+  return (
+    <div className="relative min-w-0">
+      <p className={className}>{visible}</p>
       {active ? (
         <span
           className="ml-px inline-block h-[1em] w-[2px] translate-y-px rounded-full bg-primary/45 align-middle"
@@ -472,7 +564,7 @@ export function ChatPanelStandalone({
       className={cn(
         "flex flex-col overflow-hidden backdrop-blur-md",
         isEmbedded
-          ? "relative z-10 h-full min-h-0 w-full max-w-none rounded-none border-0 bg-background shadow-none backdrop-blur-none dark:bg-background"
+          ? "relative z-[70] h-full min-h-0 w-full max-w-none rounded-none border-0 bg-background shadow-none backdrop-blur-none dark:bg-background"
           : "rounded-2xl border border-border/60 bg-card/85 shadow-[0_24px_80px_-12px_rgba(0,0,0,0.28)] dark:border-border/50 dark:bg-card/80 dark:shadow-[0_24px_80px_-12px_rgba(0,0,0,0.55)] fixed z-50 w-[min(100vw-2rem,23rem)]",
         className,
       )}
@@ -494,7 +586,7 @@ export function ChatPanelStandalone({
         )}
       >
         <div className="flex min-w-0 items-center gap-1.5">
-          <Sparkles className="h-3 w-3 shrink-0 text-primary" strokeWidth={2} aria-hidden />
+          <FilledSparkle className="h-3 w-3 shrink-0 text-primary" aria-hidden />
           <span className="truncate text-[15px] font-semibold tracking-tight text-foreground">{panelTitle}</span>
         </div>
         {showCloseButton && onClose ? (
@@ -629,11 +721,8 @@ function AgentMessageTurn({
   panelVariant?: "manage" | "operator"
   onTaskAction?: (action: ChatTaskAction) => void
 }) {
-  const [streamDone, setStreamDone] = useState(() => !m.markdown)
-
-  useEffect(() => {
-    if (!m.markdown) scrollToBottom()
-  }, [m.markdown, m.id, m.body, scrollToBottom])
+  const plainClass = "max-w-none whitespace-pre-wrap text-[14px] leading-relaxed text-foreground/95"
+  const [streamDone, setStreamDone] = useState(false)
 
   return (
     <article className="min-w-0">
@@ -649,7 +738,16 @@ function AgentMessageTurn({
           }}
         />
       ) : (
-        <p className="max-w-none whitespace-pre-wrap text-[14px] leading-relaxed text-foreground/95">{m.body}</p>
+        <StreamingAssistantPlain
+          text={m.body}
+          className={plainClass}
+          maxStreamMs={maxStreamMs}
+          onProgress={scrollToBottom}
+          onComplete={() => {
+            setStreamDone(true)
+            scrollToBottom()
+          }}
+        />
       )}
       {streamDone ? (
         <>
@@ -980,7 +1078,7 @@ function buildAgentReply(
               href: "https://www.instrumentl.com",
             },
           ],
-      viz: mixAltUnderspendSpendCharts(),
+      viz: [...mixAltUnderspendSpendCharts(), mixAltRacineGrantFollowUp()],
     }
   }
 

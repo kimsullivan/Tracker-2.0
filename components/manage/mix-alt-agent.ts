@@ -1,7 +1,7 @@
 import type { ChatSource, ChatViz } from "@/components/manage/chat-inline-viz"
 import type { Grain } from "@/components/manage/grain-bar"
 import type { ActionItem, Grant, IssueNavigationContext, FunderType } from "@/lib/manage/types"
-import { team } from "@/lib/manage/data"
+import { team, RACINE_COMMUNITY_FOUNDATION_GRANT_ID } from "@/lib/manage/data"
 import type { ColKey, GroupBy, SortDir } from "@/components/manage/all-grants"
 
 export type MixAltEffect =
@@ -74,6 +74,21 @@ export function mixAltUnderspendSpendCharts(): ChatViz[] {
       ],
     },
   ]
+}
+
+/** CTA block: open the Racine demo grant from underspend assistant replies */
+export function mixAltRacineGrantFollowUp(): ChatViz {
+  return {
+    kind: "tasks",
+    items: [
+      {
+        title: "Racine Community Foundation",
+        subtitle: "View the full grant record for budget pace, period, and activity.",
+        tone: "action",
+        actions: [{ label: "View more", href: `mixalt://grant/${RACINE_COMMUNITY_FOUNDATION_GRANT_ID}` }],
+      },
+    ],
+  }
 }
 
 export function mixAltOverspendSpendCharts(): ChatViz[] {
@@ -662,7 +677,7 @@ export function matchMixAltAgentTurn(raw: string, snap: MixAltAgentSnapshot): Mi
       return {
         agentBody:
           "This grant has used 40% of its budget but is 80% through its grant period. We flag underspend when usage is more than 20% behind expected pace. The metrics and charts summarize spend pace vs linear expectation as a percentage of the award.",
-        viz: mixAltUnderspendSpendCharts(),
+        viz: [...mixAltUnderspendSpendCharts(), mixAltRacineGrantFollowUp()],
         effects: [],
       }
     }

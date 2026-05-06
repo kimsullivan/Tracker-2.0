@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useLayoutEffect, useMemo, useState } from "react"
-import { Sparkles } from "lucide-react"
+import { FilledSparkle } from "@/components/ui/filled-sparkle"
 import { cn } from "@/lib/utils"
 import { TopBar } from "@/components/manage/top-bar"
 import { GrainBar, GrainNavToggle, type Grain } from "@/components/manage/grain-bar"
@@ -9,7 +9,8 @@ import { CommandCenterWorkspace, Greeting, MyWorkAttentionStrip, PulseStrip, MyW
 import { AllGrants } from "@/components/manage/all-grants"
 import { PulseStripRechartsStatic } from "@/components/manage/all-grants-kpi-tiles"
 import { GrantPage } from "@/components/manage/grant-page"
-import { ChatPanelStandalone, getManageAssistantInitialMessages, getManageAssistantSuggestions } from "@/components/manage/chat-panel.standalone"
+import { ChatPanelStandalone, getElizabethAssistantInitialMessages, getManageAssistantSuggestions } from "@/components/manage/chat-panel.standalone"
+import type { ChatTaskAction } from "@/components/manage/chat-inline-viz"
 import { grants } from "@/lib/manage/data"
 import { ManagePrototypeSidebar } from "@/components/sidebar/manage-prototype-sidebar"
 
@@ -46,6 +47,23 @@ export function MixedPrototype() {
   const contextLabel = grant ? grant.title : grain === "command" ? "My work" : "All grants table"
 
   const workQueue = useMyWorkQueueState()
+
+  const elizabethAssistantInitialMessages = useMemo(() => getElizabethAssistantInitialMessages(), [])
+
+  const handleMixAltChatAction = useCallback(
+    (action: ChatTaskAction): boolean => {
+      const href = action.href
+      if (!href.startsWith("mixalt://")) return false
+      const rest = href.slice("mixalt://".length)
+      if (rest.startsWith("grant/")) {
+        const grantId = decodeURIComponent(rest.slice("grant/".length))
+        openGrant(grantId)
+        return true
+      }
+      return false
+    },
+    [openGrant],
+  )
 
   const myWorkAttentionSummary = useMemo(() => {
     const openIssues = workQueue.items.filter((i) => !i.done).length
@@ -113,7 +131,7 @@ export function MixedPrototype() {
           ) : (
             <>
               {/* Primary: greeting (My work) + KPIs + toggle + queue OR grants table only */}
-              <section className="flex min-h-0 min-w-0 flex-1 flex-col">
+              <section className="relative z-0 flex min-h-0 min-w-0 flex-1 flex-col">
                 <div
                   className={cn(
                     MIXED_PRIMARY,
@@ -136,25 +154,32 @@ export function MixedPrototype() {
                   </div>
 
                   {grain === "command" ? (
-                    <>
-                      <div className="shrink-0 space-y-6">
-                        <MyWorkAttentionStrip items={workQueue.items} />
-                      </div>
-                      <div className="mt-6 flex min-w-0 flex-wrap items-center justify-between gap-3">
-                        <GrainNavToggle active={grain} onChange={setGrain} size="panel" />
-                        <MyWorkQueueToolbar
-                          queueSort={workQueue.queueSort}
-                          setQueueSort={workQueue.setQueueSort}
-                          hideDone={workQueue.hideDone}
-                          setHideDone={workQueue.setHideDone}
-                        />
-                      </div>
-                      <div className="relative mt-2 flex min-h-0 flex-1 flex-col overflow-visible">
-                        <div className="shadow-bleed-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain px-0 pb-10 pt-3 [-webkit-overflow-scrolling:touch]">
-                          <CommandCenterWorkspace onOpenGrant={openGrant} myWorkQueue={workQueue} />
+                    <div className="relative mt-2 flex min-h-0 flex-1 flex-col overflow-visible">
+                      <div className="shadow-bleed-scroll min-h-0 flex-1 overflow-auto overscroll-contain px-0 pb-10 [-webkit-overflow-scrolling:touch]">
+                        <div className="mb-6">
+                          <MyWorkAttentionStrip items={workQueue.items} />
+                        </div>
+                        <div className="sticky top-0 z-30 bg-background/95 pb-3 pt-2 backdrop-blur-sm supports-[backdrop-filter]:bg-background/80 dark:bg-background/90">
+                          <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
+                            <GrainNavToggle active={grain} onChange={setGrain} size="panel" />
+                            <MyWorkQueueToolbar
+                              queueSort={workQueue.queueSort}
+                              setQueueSort={workQueue.setQueueSort}
+                              hideDone={workQueue.hideDone}
+                              setHideDone={workQueue.setHideDone}
+                            />
+                          </div>
+                        </div>
+                        <div className="pt-3">
+                          <CommandCenterWorkspace
+                            onOpenGrant={openGrant}
+                            myWorkQueue={workQueue}
+                            operatorTaskQueue
+                            stickyOperatorTableHeader
+                          />
                         </div>
                       </div>
-                    </>
+                    </div>
                   ) : (
                     <div
                       ref={setGrantsScrollPort}
@@ -181,8 +206,8 @@ export function MixedPrototype() {
 
               {/* Operator chat: outside primary shell; beside table, not under KPIs */}
               {(grain === "all-grants" || grain === "command") && operatorChatOpen ? (
-                <aside className="flex min-h-0 w-full shrink-0 flex-col overflow-visible bg-transparent px-0 pt-6 pb-6 md:h-full md:max-h-none md:max-w-[26rem] md:w-[min(26rem,32vw)] md:shrink-0 md:pl-1 md:pt-8 md:pb-6 md:pr-4 xl:pr-5">
-                  <div className="operator-chat-enter flex h-[min(42vh,26rem)] max-h-[480px] min-h-[220px] w-full shrink-0 flex-col overflow-visible rounded-xl border border-elevated-stroke bg-transparent shadow-sm dark:bg-card dark:shadow-sm md:h-full md:max-h-none md:min-h-0">
+                <aside className="relative z-[70] flex min-h-0 w-full shrink-0 flex-col overflow-visible bg-transparent px-0 pt-6 pb-6 md:h-full md:max-h-none md:max-w-[26rem] md:w-[min(26rem,32vw)] md:shrink-0 md:pl-1 md:pt-8 md:pb-6 md:pr-4 xl:pr-5">
+                  <div className="operator-chat-enter flex h-[min(42vh,26rem)] max-h-[480px] min-h-[220px] w-full shrink-0 flex-col overflow-visible rounded-xl border border-elevated-stroke bg-background/95 shadow-sm backdrop-blur-sm dark:bg-card dark:shadow-sm md:h-full md:max-h-none md:min-h-0">
                     <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl">
                       <ChatPanelStandalone
                         variant="manage"
@@ -191,8 +216,9 @@ export function MixedPrototype() {
                         contextLabel={contextLabel}
                         onClose={() => setOperatorChatOpen(false)}
                         title="Grants assistant"
-                        initialMessages={getManageAssistantInitialMessages()}
+                        initialMessages={elizabethAssistantInitialMessages}
                         suggestions={getManageAssistantSuggestions()}
+                        onMixAltTaskAction={handleMixAltChatAction}
                       />
                     </div>
                   </div>
@@ -212,7 +238,7 @@ export function MixedPrototype() {
             }}
             aria-label="Open grants assistant"
           >
-            <Sparkles className="h-5 w-5 text-primary-foreground" strokeWidth={1.75} aria-hidden />
+            <FilledSparkle className="h-5 w-5 text-primary-foreground" aria-hidden />
             <span className="absolute -top-1 -right-1 h-3 w-3 rounded-full bg-chart-3 ring-2 ring-background" />
           </button>
         ) : null}

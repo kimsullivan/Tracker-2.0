@@ -15,13 +15,11 @@ export type FunderPortfolioRow = {
 
 /** KPI drill state for the Funder portfolio saved-view lens (All Grants operator). */
 export type FunderPortfolioKpiState = {
-  funderType: FunderType | null
   topFundersOnly: boolean
   multiYearOnly: boolean
 }
 
 export const DEFAULT_FUNDER_PORTFOLIO_KPI: FunderPortfolioKpiState = {
-  funderType: null,
   topFundersOnly: false,
   multiYearOnly: false,
 }
@@ -149,8 +147,6 @@ export function funderHasMultiYearRelationship(gs: Grant[]): boolean {
 /** Narrow grants after toolbar filters, using portfolio KPI tile drills. */
 export function applyFunderPortfolioKpiFilters(grants: Grant[], kpi: FunderPortfolioKpiState, now: Date): Grant[] {
   let list = grants
-  if (kpi.funderType) list = list.filter((x) => x.funderType === kpi.funderType)
-
   let rows = aggregateFunderRows(list, now)
   if (kpi.topFundersOnly) {
     const top = new Set(rows.slice(0, 5).map((row) => row.key))

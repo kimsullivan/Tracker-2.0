@@ -112,6 +112,7 @@ export function CommandCenterWorkspace({
   hideAnomaliesPanel,
   operatorTaskQueue,
   myWorkQueue,
+  stickyOperatorTableHeader,
 }: {
   onOpenGrant: (id: string, ctx?: IssueNavigationContext) => void
   /** Mixed-alt: omit Team load card from the right rail. */
@@ -122,6 +123,8 @@ export function CommandCenterWorkspace({
   operatorTaskQueue?: boolean
   /** Mixed / mixed-alt: shared queue state when toolbar lives beside grain tabs. */
   myWorkQueue?: MyWorkQueueState
+  /** Mixed shells: keep issue queue column headers pinned under the sticky My work / All grants bar while KPIs scroll away. */
+  stickyOperatorTableHeader?: boolean
 }) {
   const showAnomalies = !hideAnomaliesPanel
   const showTeamLoad = !hideTeamLoad
@@ -130,7 +133,12 @@ export function CommandCenterWorkspace({
   if (!showRightRail) {
     return (
       <div className="min-w-0 w-full space-y-7">
-        <ActionQueue onOpenGrant={onOpenGrant} operatorShell={operatorTaskQueue} myWorkQueue={myWorkQueue} />
+        <ActionQueue
+          onOpenGrant={onOpenGrant}
+          operatorShell={operatorTaskQueue}
+          myWorkQueue={myWorkQueue}
+          stickyOperatorTableHeader={stickyOperatorTableHeader}
+        />
       </div>
     )
   }
@@ -138,7 +146,12 @@ export function CommandCenterWorkspace({
   return (
     <div className="grid w-full grid-cols-1 gap-7 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
       <div className="min-w-0 space-y-7">
-        <ActionQueue onOpenGrant={onOpenGrant} operatorShell={operatorTaskQueue} myWorkQueue={myWorkQueue} />
+        <ActionQueue
+          onOpenGrant={onOpenGrant}
+          operatorShell={operatorTaskQueue}
+          myWorkQueue={myWorkQueue}
+          stickyOperatorTableHeader={stickyOperatorTableHeader}
+        />
       </div>
       <div className="min-w-0 space-y-6">
         {showAnomalies ? <AnomaliesPanel /> : null}
@@ -717,10 +730,12 @@ function ActionQueue({
   onOpenGrant,
   operatorShell,
   myWorkQueue,
+  stickyOperatorTableHeader,
 }: {
   onOpenGrant: (id: string, ctx?: IssueNavigationContext) => void
   operatorShell?: boolean
   myWorkQueue?: MyWorkQueueState
+  stickyOperatorTableHeader?: boolean
 }) {
   if (myWorkQueue) {
     return (
@@ -729,6 +744,7 @@ function ActionQueue({
         operatorShell={operatorShell}
         q={myWorkQueue}
         embeddedToolbar={false}
+        stickyOperatorTableHeader={stickyOperatorTableHeader}
       />
     )
   }
@@ -753,11 +769,13 @@ function ActionQueueInner({
   operatorShell,
   q,
   embeddedToolbar,
+  stickyOperatorTableHeader,
 }: {
   onOpenGrant: (id: string, ctx?: IssueNavigationContext) => void
   operatorShell?: boolean
   q: MyWorkQueueState
   embeddedToolbar: boolean
+  stickyOperatorTableHeader?: boolean
 }) {
   const { sortedVisible, toggle } = q
 
@@ -783,6 +801,7 @@ function ActionQueueInner({
           onOpenGrant={onOpenGrant}
           queueSort={q.queueSort}
           setQueueSort={q.setQueueSort}
+          stickyHeader={stickyOperatorTableHeader}
         />
       ) : (
         <SimpleTaskList sortedVisible={sortedVisible} toggle={toggle} onOpenGrant={onOpenGrant} />
@@ -913,21 +932,39 @@ function OperatorTaskTable({
   onOpenGrant,
   queueSort,
   setQueueSort,
+  stickyHeader,
 }: {
   sortedVisible: ActionItem[]
   toggle: (id: string) => void
   onOpenGrant: (id: string, ctx?: IssueNavigationContext) => void
   queueSort: QueueSort
   setQueueSort: Dispatch<SetStateAction<QueueSort>>
+  /** Mixed My work: pin column headers under the sticky grain toggle rail when KPIs scroll away. */
+  stickyHeader?: boolean
 }) {
   return (
     <Table
-      containerClassName="px-0 py-0 sm:px-0 sm:py-0"
+      containerClassName={cn(
+        "px-0 py-0 sm:px-0 sm:py-0",
+        /**
+         * `Table` defaults to `overflow-x-auto` on the wrapper. That inner scrollport steals
+         * `position: sticky` from `thead`, so headers vanish or never pin to the My work column
+         * scroller. Let horizontal overflow propagate to the mixed shell’s `overflow-y-auto`
+         * region so thead sticks to the same vertical scroll root as the grain toggle bar.
+         */
+        stickyHeader && "overflow-x-visible",
+      )}
       className={cn(
         "min-w-[720px] text-xs font-normal [&_th]:h-auto [&_th]:min-h-0 [&_th]:py-1.5 [&_th]:font-normal [&_th]:leading-tight",
       )}
     >
-      <TableHeader className="[&_tr]:border-b [&_tr]:border-border/25">
+      <TableHeader
+        className={cn(
+          "[&_tr]:border-b [&_tr]:border-border/25",
+          stickyHeader &&
+            "sticky top-[4.5rem] z-[25] border-b border-border/80 bg-background shadow-[0_1px_0_0_hsl(var(--border)/0.35)] dark:bg-background",
+        )}
+      >
         <TableRow className="border-0 bg-transparent hover:bg-transparent [&>th]:border-0">
           <TableHead
             className={cn(

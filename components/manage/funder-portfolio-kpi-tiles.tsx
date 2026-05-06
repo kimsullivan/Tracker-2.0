@@ -19,11 +19,14 @@ import {
   AllActiveTileHero,
   AllActiveTileShell,
   DRILL_ROW_ACTIVE,
-  KPI_BAR_WIDTH_TRANSITION_CLASS,
+  KpiAnimatedBar,
+  KpiChartMotionProvider,
   KPI_CHART_ANIMATION_DURATION_MS,
   KPI_CHART_ANIMATION_EASING,
   KPI_CHART_FONT,
+  KPI_ROW_IDLE_HOVER,
   MIXED_ALT_TILE_CHROME,
+  useKpiChartMotion,
 } from "@/components/manage/all-grants-kpi-tiles"
 
 export type { FunderPortfolioKpiState }
@@ -39,8 +42,8 @@ function fmtBoard$(n: number): string {
 }
 
 const FUNDER_TYPE_COLOR: Record<FunderType, string> = {
-  Federal: AG_KPI_TOKENS.purple400,
-  Private: AG_KPI_TOKENS.purple600,
+  Federal: AG_KPI_TOKENS.purple600,
+  Private: AG_KPI_TOKENS.purple400,
   Corporate: AG_KPI_TOKENS.purple200,
   State: AG_KPI_TOKENS.purple100,
   Local: AG_KPI_TOKENS.purple50,
@@ -55,19 +58,40 @@ function fundersActiveInYear(grantsSource: Grant[], year: number): Set<string> {
   return s
 }
 
-export function PulseStripFunderPortfolio({
+export function PulseStripFunderPortfolio(props: {
+  grantsScoped: Grant[]
+  grantsFull: Grant[]
+  anchorYear: number
+  kpi: FunderPortfolioKpiState
+  onKpiChange: (next: FunderPortfolioKpiState) => void
+  selectedFunderType: FunderType | null
+  onFunderTypeChange: (next: FunderType | null) => void
+}) {
+  return (
+    <KpiChartMotionProvider>
+      <PulseStripFunderPortfolioInner {...props} />
+    </KpiChartMotionProvider>
+  )
+}
+
+function PulseStripFunderPortfolioInner({
   grantsScoped,
   grantsFull,
   anchorYear,
   kpi,
   onKpiChange,
+  selectedFunderType,
+  onFunderTypeChange,
 }: {
   grantsScoped: Grant[]
   grantsFull: Grant[]
   anchorYear: number
   kpi: FunderPortfolioKpiState
   onKpiChange: (next: FunderPortfolioKpiState) => void
+  selectedFunderType: FunderType | null
+  onFunderTypeChange: (next: FunderType | null) => void
 }) {
+  const { chartReady, reducedMotion } = useKpiChartMotion()
   const now = useMemo(() => new Date(), [])
   const uid = useId().replace(/:/g, "")
 
@@ -123,20 +147,21 @@ export function PulseStripFunderPortfolio({
   const repeatMultiYearCount = rows.filter((r) => funderHasMultiYearRelationship(r.grants)).length
 
   function clearKpi() {
-    onKpiChange({ funderType: null, topFundersOnly: false, multiYearOnly: false })
+    onKpiChange({ topFundersOnly: false, multiYearOnly: false })
+    onFunderTypeChange(null)
   }
 
   const barColors = [
     AG_KPI_TOKENS.purple600,
     AG_KPI_TOKENS.purple400,
-    AG_KPI_TOKENS.purple400,
+    "#7E87E8",
     AG_KPI_TOKENS.purple200,
-    AG_KPI_TOKENS.purple200,
+    "#9B92D4",
   ]
 
   const repeatLegend = [
     { key: "active" as const, label: "Active relationships", count: repeatBuckets.active, fill: AG_KPI_TOKENS.teal600 },
-    { key: "due" as const, label: "Renewal due (next 90d)", count: repeatBuckets.due90, fill: AG_KPI_TOKENS.purple400 },
+    { key: "due" as const, label: "Renewal due (next 90d)", count: repeatBuckets.due90, fill: "#C9782A" },
     { key: "lapsed" as const, label: "Lapsed (no renewal yet)", count: repeatBuckets.lapsed, fill: AG_KPI_TOKENS.gray400 },
   ]
 
@@ -148,7 +173,7 @@ export function PulseStripFunderPortfolio({
         onClick={clearKpi}
         style={{ fontFamily: KPI_CHART_FONT }}
         className={cn(
-          "flex h-[260px] w-full flex-col rounded-[12px] border-[0.5px] p-[18px] text-left [gap:10px] outline-none",
+          "flex h-[220px] w-full flex-col rounded-[12px] border-[0.5px] p-[18px] text-left gap-1.5 outline-none",
           "border-[rgba(0,0,0,0.08)] bg-[color:#FFFFFF] dark:border-border dark:bg-card",
           MIXED_ALT_TILE_CHROME,
         )}
@@ -157,45 +182,36 @@ export function PulseStripFunderPortfolio({
           label="Total funders"
           right={<AllActiveDeltaPill direction={funderDeltaDirection} value={`${Math.abs(funderYoY)}`} />}
         />
-        <AllActiveTileHero
-          value={fmtComma(distinctFunders)}
-          caption={`${fmtComma(newThisYear)} new this year · ${fmtComma(returning)} returning`}
-        />
+        <AllActiveTileHero value={fmtComma(distinctFunders)} />
 
-        <div className="mt-1 flex min-h-0 flex-1 flex-col justify-center [gap:14px]" style={{ marginTop: 4 }}>
+        <div className="-mt-1 flex min-h-0 flex-1 flex-col justify-center gap-2">
           <div>
-            <div className="mb-[5px] flex justify-between text-[11px]">
+            <div className="mb-1 flex justify-between text-[11px]">
               <span style={{ color: AG_KPI_TOKENS.textSecondary }}>Returning</span>
               <span className="font-bold tabular-nums dark:text-card-foreground" style={{ color: AG_KPI_TOKENS.textPrimary }}>
                 {fmtComma(returning)}
               </span>
             </div>
             <div className="overflow-hidden rounded-[3px]" style={{ height: 6, background: AG_KPI_TOKENS.bgPage }}>
-              <div
-                className={cn("h-full rounded-[3px]", KPI_BAR_WIDTH_TRANSITION_CLASS)}
-                style={{
-                  width: `${distinctFunders > 0 ? (returning / distinctFunders) * 100 : 0}%`,
-                  background: AG_KPI_TOKENS.purple600,
-                }}
-                aria-hidden
+              <KpiAnimatedBar
+                widthPct={distinctFunders > 0 ? (returning / distinctFunders) * 100 : 0}
+                background={AG_KPI_TOKENS.purple600}
+                className="rounded-[3px]"
               />
             </div>
           </div>
           <div>
-            <div className="mb-[5px] flex justify-between text-[11px]">
+            <div className="mb-1 flex justify-between text-[11px]">
               <span style={{ color: AG_KPI_TOKENS.textSecondary }}>New this year</span>
               <span className="font-bold tabular-nums dark:text-card-foreground" style={{ color: AG_KPI_TOKENS.textPrimary }}>
                 {fmtComma(newThisYear)}
               </span>
             </div>
             <div className="overflow-hidden rounded-[3px]" style={{ height: 6, background: AG_KPI_TOKENS.bgPage }}>
-              <div
-                className={cn("h-full rounded-[3px]", KPI_BAR_WIDTH_TRANSITION_CLASS)}
-                style={{
-                  width: `${distinctFunders > 0 ? (newThisYear / distinctFunders) * 100 : 0}%`,
-                  background: AG_KPI_TOKENS.purple200,
-                }}
-                aria-hidden
+              <KpiAnimatedBar
+                widthPct={distinctFunders > 0 ? (newThisYear / distinctFunders) * 100 : 0}
+                background={AG_KPI_TOKENS.purple50}
+                className="rounded-[3px]"
               />
             </div>
           </div>
@@ -207,10 +223,10 @@ export function PulseStripFunderPortfolio({
           label="Funder mix"
           right={<span className="text-[11px] font-medium" style={{ color: AG_KPI_TOKENS.textTertiary }}>By type</span>}
         />
-        <AllActiveTileHero value={`${mixTotal}`} caption={topMix ? `${topMix.name} leads at ${topMixPct}%` : "—"} />
+        <AllActiveTileHero value={`${mixTotal}`} />
 
-        <div className="mt-1 flex min-h-0 flex-1 items-center gap-[14px]" style={{ marginTop: 4 }}>
-          <div className="relative h-24 w-24 shrink-0">
+        <div className="-mt-1 flex min-h-0 flex-1 items-center gap-2">
+          <div className="relative h-20 w-20 shrink-0">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart tabIndex={-1}>
                 <Pie
@@ -219,24 +235,21 @@ export function PulseStripFunderPortfolio({
                   nameKey="name"
                   cx="50%"
                   cy="50%"
-                  innerRadius={32}
-                  outerRadius={46}
+                  innerRadius={26}
+                  outerRadius={36}
                   startAngle={90}
                   endAngle={-270}
                   paddingAngle={0}
                   stroke="none"
                   style={{ fontFamily: KPI_CHART_FONT }}
-                  animationDuration={KPI_CHART_ANIMATION_DURATION_MS}
+                  isAnimationActive={!reducedMotion && chartReady}
+                  animationDuration={reducedMotion ? 0 : KPI_CHART_ANIMATION_DURATION_MS}
                   animationEasing={KPI_CHART_ANIMATION_EASING}
                   onClick={(_, index) => {
                     const ft = mixSlices[index]?.funderType
                     if (!ft) return
-                    onKpiChange({
-                      ...kpi,
-                      funderType: kpi.funderType === ft ? null : ft,
-                      topFundersOnly: false,
-                      multiYearOnly: false,
-                    })
+                    onKpiChange({ topFundersOnly: false, multiYearOnly: false })
+                    onFunderTypeChange(selectedFunderType === ft ? null : ft)
                   }}
                 >
                   {mixSlices.map((entry, idx) => (
@@ -246,7 +259,7 @@ export function PulseStripFunderPortfolio({
                       stroke="none"
                       className={cn(
                         "cursor-pointer outline-none transition-opacity hover:opacity-90",
-                        kpi.funderType === entry.funderType && "opacity-100 ring-2 ring-primary/30 ring-offset-1",
+                        selectedFunderType === entry.funderType && "opacity-100 ring-1 ring-primary/45 ring-offset-2 ring-offset-background dark:ring-offset-card",
                       )}
                     />
                   ))}
@@ -272,25 +285,21 @@ export function PulseStripFunderPortfolio({
             </div>
           </div>
 
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-1 overflow-hidden text-[11px]" style={{ fontFamily: KPI_CHART_FONT }}>
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-0 overflow-hidden text-[11px]" style={{ fontFamily: KPI_CHART_FONT }}>
             {mixSlices.map((entry) => {
-              const rowAct = kpi.funderType === entry.funderType
+              const rowAct = selectedFunderType === entry.funderType
               return (
                 <button
                   key={entry.name}
                   type="button"
                   title={`Filter · Funder type · ${entry.name}`}
-                  onClick={() =>
-                    onKpiChange({
-                      ...kpi,
-                      funderType: rowAct ? null : entry.funderType,
-                      topFundersOnly: false,
-                      multiYearOnly: false,
-                    })
-                  }
+                  onClick={() => {
+                    onKpiChange({ topFundersOnly: false, multiYearOnly: false })
+                    onFunderTypeChange(rowAct ? null : entry.funderType)
+                  }}
                   className={cn(
-                    "flex min-w-0 items-center gap-1.5 rounded-md px-0.5 py-0.5 text-left font-inherit outline-none transition-colors",
-                    rowAct ? DRILL_ROW_ACTIVE : "hover:bg-muted/15",
+                    "flex min-w-0 items-center gap-1.5 rounded-md px-2 py-1 text-left font-inherit outline-none transition-[background-color,box-shadow]",
+                    rowAct ? DRILL_ROW_ACTIVE : KPI_ROW_IDLE_HOVER,
                   )}
                 >
                   <span className="h-[7px] w-[7px] shrink-0 rounded-[2px]" style={{ background: entry.color }} aria-hidden />
@@ -322,7 +331,7 @@ export function PulseStripFunderPortfolio({
         }
         style={{ fontFamily: KPI_CHART_FONT }}
         className={cn(
-          "flex h-[260px] w-full flex-col rounded-[12px] border-[0.5px] p-[18px] text-left [gap:10px] outline-none",
+          "flex h-[220px] w-full flex-col rounded-[12px] border-[0.5px] p-[18px] text-left gap-1.5 outline-none",
           "border-[rgba(0,0,0,0.08)] bg-[color:#FFFFFF] dark:border-border dark:bg-card",
           MIXED_ALT_TILE_CHROME,
           kpi.topFundersOnly && DRILL_ROW_ACTIVE,
@@ -332,12 +341,9 @@ export function PulseStripFunderPortfolio({
           label="Top funder concentration"
           right={<span className="text-[11px] font-medium" style={{ color: AG_KPI_TOKENS.textTertiary }}>Top 5</span>}
         />
-        <AllActiveTileHero
-          value={`${concentrationPct}%`}
-          caption={`${fmtBoard$(top5Sum)} from top 5 of ${fmtBoard$(totalAwardedAll)}`}
-        />
+        <AllActiveTileHero value={`${concentrationPct}%`} />
 
-        <div className="mt-1 flex min-h-0 flex-1 flex-col justify-center gap-1.5 text-[11px]" style={{ marginTop: 4 }}>
+        <div className="-mt-1 flex min-h-0 flex-1 flex-col justify-center gap-1.5 text-[11px]" style={{ fontFamily: KPI_CHART_FONT }}>
           {top5Rows.map((d, idx) => {
             const widthPct = maxBar > 0 ? (d.totalAwarded / maxBar) * 100 : 0
             return (
@@ -349,10 +355,10 @@ export function PulseStripFunderPortfolio({
                   {d.funder}
                 </span>
                 <div className="min-h-px min-w-0 flex-1 overflow-hidden rounded-[3px]" style={{ height: 6, background: AG_KPI_TOKENS.bgPage }}>
-                  <div
-                    className={cn("h-full rounded-[3px]", KPI_BAR_WIDTH_TRANSITION_CLASS)}
-                    style={{ width: `${widthPct}%`, background: barColors[idx] ?? AG_KPI_TOKENS.purple200 }}
-                    aria-hidden
+                  <KpiAnimatedBar
+                    widthPct={widthPct}
+                    background={barColors[idx] ?? AG_KPI_TOKENS.purple200}
+                    className="rounded-[3px]"
                   />
                 </div>
                 <span
@@ -379,7 +385,7 @@ export function PulseStripFunderPortfolio({
         }
         style={{ fontFamily: KPI_CHART_FONT }}
         className={cn(
-          "flex h-[260px] w-full flex-col rounded-[12px] border-[0.5px] p-[18px] text-left [gap:10px] outline-none",
+          "flex h-[220px] w-full flex-col rounded-[12px] border-[0.5px] p-[18px] text-left gap-1.5 outline-none",
           "border-[rgba(0,0,0,0.08)] bg-[color:#FFFFFF] dark:border-border dark:bg-card",
           MIXED_ALT_TILE_CHROME,
           kpi.multiYearOnly && DRILL_ROW_ACTIVE,
@@ -389,18 +395,15 @@ export function PulseStripFunderPortfolio({
           label="Repeat funders"
           right={<span className="text-[11px] font-medium" style={{ color: AG_KPI_TOKENS.textTertiary }}>Multi-year</span>}
         />
-        <AllActiveTileHero
-          value={`${fmtComma(repeatMultiYearCount)}`}
-          caption={`${repeatBuckets.due90} renewals due, ${repeatBuckets.lapsed} lapsed`}
-        />
+        <AllActiveTileHero value={`${fmtComma(repeatMultiYearCount)}`} />
 
-        <div className="mt-1 flex min-h-0 flex-1 flex-col justify-center gap-3.5" style={{ marginTop: 4 }}>
+        <div className="-mt-1 flex min-h-0 flex-1 flex-col justify-center gap-2">
           <div className="flex overflow-hidden rounded-[4px]" style={{ height: 8, gap: 1 }}>
             {repeatLegend.map((d) => (
               <div key={d.key} style={{ flex: Math.max(1, d.count), background: d.fill }} aria-hidden />
             ))}
           </div>
-          <div className="flex flex-col gap-1.5 text-[11px]">
+          <div className="flex flex-col gap-1 text-[11px]">
             {repeatLegend.map((d, idx) => (
               <div key={d.key} className="flex items-center gap-1.5">
                 <span className="h-[7px] w-[7px] shrink-0 rounded-[2px]" style={{ background: d.fill }} aria-hidden />

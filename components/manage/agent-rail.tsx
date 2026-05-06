@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { Sparkles } from "lucide-react"
+import { FilledSparkle } from "@/components/ui/filled-sparkle"
 import { ChatPanelStandalone } from "./chat-panel.standalone"
 
 export function AgentRail({ contextLabel }: { contextLabel: string }) {
@@ -17,7 +17,7 @@ export function AgentRail({ contextLabel }: { contextLabel: string }) {
         }}
         aria-label="Open assistant"
       >
-        <Sparkles className="h-5 w-5 text-primary-foreground" strokeWidth={1.75} aria-hidden />
+        <FilledSparkle className="h-5 w-5 text-primary-foreground" aria-hidden />
         <span className="absolute -top-1 -right-1 h-3 w-3 rounded-full bg-chart-3 ring-2 ring-background" />
       </button>
     )

@@ -5,7 +5,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { useScrollDockPins } from "@/hooks/use-scroll-dock-pins"
 import type { CSSProperties, ReactNode } from "react"
 import { grants as grantsData, stageOrder, team } from "@/lib/manage/data"
-import type { Grant, Stage } from "@/lib/manage/types"
+import type { Grant, Stage, FunderType } from "@/lib/manage/types"
 import { grantDeadlineInCalendarYear } from "@/lib/manage/board-report"
 import { cn } from "@/lib/utils"
 import { PriorityPill, StagePill } from "./status-pill"
@@ -38,11 +38,18 @@ import {
   type FunderPortfolioKpiState,
 } from "@/lib/manage/funder-portfolio"
 import { PulseStripFunderPortfolio } from "@/components/manage/funder-portfolio-kpi-tiles"
+import { downloadGrantsCsvReport, downloadGrantsPdfReport } from "@/lib/manage/grants-export"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import {
   Select,
   SelectContent,
@@ -160,6 +167,16 @@ function reorderColumns(order: ColKey[], from: ColKey, to: ColKey): ColKey[] {
 }
 
 export type GroupBy = "stage" | "owner" | "funderType" | "funder" | "projectGroup" | "deadline" | "none"
+
+const GROUP_BY_EXPORT_LABEL: Record<GroupBy, string | null> = {
+  stage: "Stage",
+  owner: "Owner",
+  funderType: "Funder type",
+  funder: "Funder",
+  projectGroup: "Project group",
+  deadline: "Deadline month",
+  none: null,
+}
 
 export type SortDir = "asc" | "desc"
 
@@ -297,6 +314,11 @@ function formatDeadlineMonthGroupLabel(key: string): string {
   return new Date(y, m - 1, 1).toLocaleDateString("en-US", { month: "long", year: "numeric" })
 }
 
+function formatGroupExportTitle(key: string, by: GroupBy): string {
+  if (by === "deadline") return formatDeadlineMonthGroupLabel(key)
+  return key
+}
+
 const SAVED_VIEWS = [
   { id: "all", label: "All active" },
   { id: "board-leadership", label: "Board / Leadership" },
@@ -345,6 +367,31 @@ type OperatorViewConfig = {
 }
 
 type OperatorSavedView = { id: string; label: string; config: OperatorViewConfig }
+
+type OperatorColumnLayoutBaseline = { visibleSorted: ColKey[]; order: ColKey[] }
+
+function snapshotOperatorColumnLayout(visible: Set<ColKey>, order: ColKey[]): OperatorColumnLayoutBaseline {
+  return { visibleSorted: [...visible].sort(), order: [...order] }
+}
+
+function isOperatorColumnLayoutDirty(
+  visible: Set<ColKey>,
+  order: ColKey[],
+  baseline: OperatorColumnLayoutBaseline,
+): boolean {
+  const cur = snapshotOperatorColumnLayout(visible, order)
+  const vs = baseline.visibleSorted
+  if (cur.visibleSorted.length !== vs.length) return true
+  for (let i = 0; i < cur.visibleSorted.length; i++) {
+    if (cur.visibleSorted[i] !== vs[i]) return true
+  }
+  const bo = baseline.order
+  if (cur.order.length !== bo.length) return true
+  for (let i = 0; i < cur.order.length; i++) {
+    if (cur.order[i] !== bo[i]) return true
+  }
+  return false
+}
 
 export type AllGrantsFilterApi = {
   setFilters: (patch: Partial<Record<string, string | null>>) => void
@@ -453,6 +500,12 @@ export function AllGrants({
   const [draggingCol, setDraggingCol] = useState<ColKey | null>(null)
   const [fpKpi, setFpKpi] = useState<FunderPortfolioKpiState>(() => ({ ...DEFAULT_FUNDER_PORTFOLIO_KPI }))
   const [fpKpiBaseline, setFpKpiBaseline] = useState<FunderPortfolioKpiState>(() => ({ ...DEFAULT_FUNDER_PORTFOLIO_KPI }))
+  const [columnLayoutBaseline, setColumnLayoutBaseline] = useState<OperatorColumnLayoutBaseline>(() =>
+    snapshotOperatorColumnLayout(
+      new Set(COLUMNS.filter((c) => c.defaultVisible).map((c) => c.key)),
+      [...NON_GRANT_COLUMN_KEYS],
+    ),
+  )
 
   const builtinSlice = useMemo(() => {
     if (variant === "operator" && selectedViewId.startsWith("custom-")) {
@@ -474,8 +527,11 @@ export function AllGrants({
     setGroupBy("stage")
     setSortKey("amountRequested")
     setSortDir("desc")
-    setVisibleCols(new Set<ColKey>(["grant", ...TABLE_SCROLL_FILL_COL_ORDER]))
-    setColOrder([...TABLE_SCROLL_FILL_COL_ORDER])
+    const boardVis = new Set<ColKey>(["grant", ...TABLE_SCROLL_FILL_COL_ORDER])
+    const boardOrder = [...TABLE_SCROLL_FILL_COL_ORDER] as ColKey[]
+    setVisibleCols(boardVis)
+    setColOrder(boardOrder)
+    setColumnLayoutBaseline(snapshotOperatorColumnLayout(boardVis, boardOrder))
     const nextFilters: Record<string, string | null> = {
       fiscalYear: null,
       funderType: null,
@@ -494,8 +550,11 @@ export function AllGrants({
     setSortDir("desc")
     setFpKpi({ ...DEFAULT_FUNDER_PORTFOLIO_KPI })
     setFpKpiBaseline({ ...DEFAULT_FUNDER_PORTFOLIO_KPI })
-    setVisibleCols(new Set<ColKey>(["grant", ...FUNDER_PORTFOLIO_TABLE_COL_ORDER]))
-    setColOrder([...FUNDER_PORTFOLIO_TABLE_COL_ORDER])
+    const fpVis = new Set<ColKey>(["grant", ...FUNDER_PORTFOLIO_TABLE_COL_ORDER])
+    const fpOrder = [...FUNDER_PORTFOLIO_TABLE_COL_ORDER] as ColKey[]
+    setVisibleCols(fpVis)
+    setColOrder(fpOrder)
+    setColumnLayoutBaseline(snapshotOperatorColumnLayout(fpVis, fpOrder))
     const nextFilters: Record<string, string | null> = {
       fiscalYear: null,
       funderType: null,
@@ -510,8 +569,11 @@ export function AllGrants({
     setGroupBy("stage")
     setSortKey(null)
     setSortDir("asc")
-    setVisibleCols(new Set(COLUMNS.filter((c) => c.defaultVisible).map((c) => c.key)))
-    setColOrder([...NON_GRANT_COLUMN_KEYS])
+    const defVis = new Set(COLUMNS.filter((c) => c.defaultVisible).map((c) => c.key))
+    const defOrder = [...NON_GRANT_COLUMN_KEYS] as ColKey[]
+    setVisibleCols(defVis)
+    setColOrder(defOrder)
+    setColumnLayoutBaseline(snapshotOperatorColumnLayout(defVis, defOrder))
     setFpKpi({ ...DEFAULT_FUNDER_PORTFOLIO_KPI })
     setFpKpiBaseline({ ...DEFAULT_FUNDER_PORTFOLIO_KPI })
   }, [])
@@ -745,16 +807,20 @@ export function AllGrants({
     )
   }, [filters, filterBaseline])
 
+  const columnsDirty = useMemo(
+    () => variant === "operator" && isOperatorColumnLayoutDirty(visibleCols, colOrder, columnLayoutBaseline),
+    [variant, visibleCols, colOrder, columnLayoutBaseline],
+  )
+
   const fpKpiDirty = useMemo(() => {
     if (!funderPortfolioLens) return false
     return (
-      fpKpi.funderType !== fpKpiBaseline.funderType ||
       fpKpi.topFundersOnly !== fpKpiBaseline.topFundersOnly ||
       fpKpi.multiYearOnly !== fpKpiBaseline.multiYearOnly
     )
   }, [funderPortfolioLens, fpKpi, fpKpiBaseline])
 
-  const showSaveViewChip = variant === "operator" && (filtersDirty || fpKpiDirty)
+  const showSaveViewChip = variant === "operator" && (filtersDirty || fpKpiDirty || columnsDirty)
 
   const grouped = useMemo(() => {
     if (groupBy === "none") return [{ key: "All grants", items: sortedFiltered }]
@@ -809,9 +875,16 @@ export function AllGrants({
 
   const applyOperatorViewConfig = useCallback((c: OperatorViewConfig) => {
     setGroupBy(c.groupBy)
-    setVisibleCols(new Set(c.visibleColKeys))
-    setColOrder(c.colOrder)
-    const fpNext = c.funderPortfolioKpi ?? { ...DEFAULT_FUNDER_PORTFOLIO_KPI }
+    const nextVisible = new Set(c.visibleColKeys)
+    const nextOrder = [...c.colOrder]
+    setVisibleCols(nextVisible)
+    setColOrder(nextOrder)
+    setColumnLayoutBaseline(snapshotOperatorColumnLayout(nextVisible, nextOrder))
+    const fpRaw = c.funderPortfolioKpi ?? DEFAULT_FUNDER_PORTFOLIO_KPI
+    const fpNext: FunderPortfolioKpiState = {
+      topFundersOnly: Boolean(fpRaw.topFundersOnly),
+      multiYearOnly: Boolean(fpRaw.multiYearOnly),
+    }
     setFpKpi(fpNext)
     setFpKpiBaseline({ ...fpNext })
     setFilters((prev) => {
@@ -962,6 +1035,7 @@ export function AllGrants({
       setSelectedViewId(id)
       setFilterBaseline({ ...config.filters })
       setFpKpiBaseline({ ...fpKpi })
+      setColumnLayoutBaseline(snapshotOperatorColumnLayout(visibleCols, colOrder))
       toast("View saved", { description: `“${trimmed}” is in the View menu.` })
     },
     [selectedViewId, customViews, groupBy, visibleCols, colOrder, filters, fpKpi],
@@ -1013,68 +1087,21 @@ export function AllGrants({
 
   const funderPortfolioKpiInner =
     variant === "operator" && funderPortfolioLens ? (
-      <>
-        <PulseStripFunderPortfolio
-          grantsScoped={filteredBase}
-          grantsFull={grantsData}
-          anchorYear={fpAnchorYear}
-          kpi={fpKpi}
-          onKpiChange={(next) => {
-            forkIfCannedOperatorEdit()
-            setFpKpi(next)
-          }}
-        />
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
-          {fpKpi.funderType ? (
-            <span className="inline-flex max-w-full items-center gap-1 rounded-full border border-border bg-muted/45 px-2 py-0.5 text-[11px] text-foreground">
-              <span className="min-w-0 truncate">Funder type: {fpKpi.funderType}</span>
-              <button
-                type="button"
-                className="shrink-0 rounded-full p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
-                aria-label="Clear funder type drill"
-                onClick={() => {
-                  forkIfCannedOperatorEdit()
-                  setFpKpi((p) => ({ ...p, funderType: null }))
-                }}
-              >
-                <X className="h-3 w-3" aria-hidden />
-              </button>
-            </span>
-          ) : null}
-          {fpKpi.topFundersOnly ? (
-            <span className="inline-flex max-w-full items-center gap-1 rounded-full border border-border bg-muted/45 px-2 py-0.5 text-[11px] text-foreground">
-              <span className="min-w-0 truncate">Top 5 funders</span>
-              <button
-                type="button"
-                className="shrink-0 rounded-full p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
-                aria-label="Clear top funders drill"
-                onClick={() => {
-                  forkIfCannedOperatorEdit()
-                  setFpKpi((p) => ({ ...p, topFundersOnly: false }))
-                }}
-              >
-                <X className="h-3 w-3" aria-hidden />
-              </button>
-            </span>
-          ) : null}
-          {fpKpi.multiYearOnly ? (
-            <span className="inline-flex max-w-full items-center gap-1 rounded-full border border-border bg-muted/45 px-2 py-0.5 text-[11px] text-foreground">
-              <span className="min-w-0 truncate">Multi-year relationship</span>
-              <button
-                type="button"
-                className="shrink-0 rounded-full p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
-                aria-label="Clear multi-year drill"
-                onClick={() => {
-                  forkIfCannedOperatorEdit()
-                  setFpKpi((p) => ({ ...p, multiYearOnly: false }))
-                }}
-              >
-                <X className="h-3 w-3" aria-hidden />
-              </button>
-            </span>
-          ) : null}
-        </div>
-      </>
+      <PulseStripFunderPortfolio
+        grantsScoped={filteredBase}
+        grantsFull={grantsData}
+        anchorYear={fpAnchorYear}
+        kpi={fpKpi}
+        onKpiChange={(next) => {
+          forkIfCannedOperatorEdit()
+          setFpKpi(next)
+        }}
+        selectedFunderType={(filters.funderType as FunderType | null) ?? null}
+        onFunderTypeChange={(ft) => {
+          forkIfCannedOperatorEdit()
+          setFilters((prev) => ({ ...prev, funderType: ft }))
+        }}
+      />
     ) : null
 
   /** Page scroll (Mixed-alt): same slot as Board / Bridge KPI strips — scrolls with the column. */
@@ -1092,6 +1119,91 @@ export function AllGrants({
         {funderPortfolioKpiInner}
       </div>
     ) : null
+
+  /** Operator: export (PDF/CSV) on pipeline “Where are we?” (`all`) plus Board & Funder built-ins. */
+  const showOperatorExport =
+    variant === "operator" && (boardAudience || funderPortfolioLens || selectedViewId === "all")
+
+  const queueLensExport = useCallback(
+    (format: "pdf" | "csv") => {
+      let base: string
+      if (boardAudience) {
+        base = `Board / Leadership · ${filters.periodYtd ?? "All periods"}`
+      } else if (funderPortfolioLens) {
+        base = `Funder portfolio · ${filters.periodYtd ? `YTD ${filters.periodYtd}` : "All time"}`
+      } else {
+        const viewName = operatorBuiltinAllLabel ?? "All active"
+        base = `${viewName} · ${filters.periodYtd ?? "All periods"}`
+      }
+
+      const tableColumns = cols.map((c) => ({
+        key: c.key,
+        label:
+          boardAudience && BOARD_COLUMN_HEADERS[c.key] ? BOARD_COLUMN_HEADERS[c.key]! : c.label,
+      }))
+      const filenameBase = base.replace(/\s*·\s*/g, "-")
+
+      const sumAwardTotal = sortedFiltered.reduce((s, g) => s + g.award, 0)
+      const sumWeightedTotal = sortedFiltered.reduce((s, g) => s + (g.weighted ?? 0), 0)
+      const exportGroups =
+        groupBy === "none"
+          ? undefined
+          : grouped.map((g) => ({
+              title: formatGroupExportTitle(g.key, groupBy),
+              items: g.items,
+            }))
+      const pdfMetrics = {
+        groupedByLabel: groupBy === "none" ? undefined : GROUP_BY_EXPORT_LABEL[groupBy] ?? undefined,
+        totalGrants: sortedFiltered.length,
+        groupCount: groupBy === "none" ? undefined : grouped.length,
+        sumAwardTotal,
+        sumWeightedTotal,
+      }
+
+      try {
+        if (format === "pdf") {
+          const title = base.split(" · ")[0]?.trim() ?? "Grants export"
+          const subtitle =
+            (base.includes(" · ") ? base.split(" · ").slice(1).join(" · ") : "") +
+            ` · ${sortedFiltered.length} grants`
+          downloadGrantsPdfReport({
+            grants: sortedFiltered,
+            columns: tableColumns,
+            title,
+            subtitle,
+            filenameBase,
+            groups: exportGroups,
+            metrics: pdfMetrics,
+          })
+          toast.success("PDF report downloaded", { description: `${base}` })
+        } else {
+          downloadGrantsCsvReport({
+            grants: sortedFiltered,
+            columns: tableColumns,
+            filenameBase,
+            groups: exportGroups,
+            includeGroupColumn: groupBy !== "none",
+          })
+          toast.success("CSV downloaded", { description: `${base}` })
+        }
+      } catch (err) {
+        console.error(err)
+        toast.error("Export failed", {
+          description: err instanceof Error ? err.message : "Unknown error",
+        })
+      }
+    },
+    [
+      boardAudience,
+      funderPortfolioLens,
+      filters.periodYtd,
+      operatorBuiltinAllLabel,
+      cols,
+      sortedFiltered,
+      grouped,
+      groupBy,
+    ],
+  )
 
   const filterToolbarInner = (
     <>
@@ -1199,24 +1311,29 @@ export function AllGrants({
       </div>
 
       <div className="ml-auto flex shrink-0 flex-nowrap items-center justify-end gap-2">
-        {boardAudience || funderPortfolioLens ? (
-          <Button
-            type="button"
-            variant="default"
-            size="sm"
-            className="h-7 shrink-0 gap-1 px-2.5 text-[11px] font-medium shadow-xs"
-            onClick={() =>
-              toast.success("Export queued", {
-                description:
-                  boardAudience
-                    ? `Board / Leadership · ${filters.periodYtd ?? "All periods"} · PDF`
-                    : `Funder portfolio · ${filters.periodYtd ? `YTD ${filters.periodYtd}` : "All time"} · PDF`,
-              })
-            }
-          >
-            <Download className="h-3 w-3 shrink-0" aria-hidden />
-            Export
-          </Button>
+        {showOperatorExport ? (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                variant="default"
+                size="sm"
+                className="h-7 shrink-0 gap-1 px-2.5 text-[11px] font-medium shadow-xs"
+              >
+                <Download className="h-3 w-3 shrink-0" aria-hidden />
+                Export
+                <ChevronDown className="h-3 w-3 shrink-0 opacity-80" aria-hidden />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="min-w-[12.5rem]">
+              <DropdownMenuItem className="text-xs font-medium" onSelect={() => queueLensExport("pdf")}>
+                Export as PDF report
+              </DropdownMenuItem>
+              <DropdownMenuItem className="text-xs font-medium" onSelect={() => queueLensExport("csv")}>
+                Export as CSV
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         ) : null}
         <ColumnPicker visible={visibleCols} onToggle={toggleColumn} />
         {showToolbarNewGrant ? (
