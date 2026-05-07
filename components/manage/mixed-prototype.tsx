@@ -5,7 +5,7 @@ import { FilledSparkle } from "@/components/ui/filled-sparkle"
 import { cn } from "@/lib/utils"
 import { TopBar } from "@/components/manage/top-bar"
 import { GrainBar, GrainNavToggle, type Grain } from "@/components/manage/grain-bar"
-import { CommandCenterWorkspace, Greeting, MyWorkAttentionStrip, PulseStrip, MyWorkQueueToolbar, useMyWorkQueueState } from "@/components/manage/command-center"
+import { CommandCenterWorkspace, Greeting, MyWorkAttentionStrip, PulseStrip, useMyWorkQueueState } from "@/components/manage/command-center"
 import { AllGrants } from "@/components/manage/all-grants"
 import { PulseStripRechartsStatic } from "@/components/manage/all-grants-kpi-tiles"
 import { GrantPage } from "@/components/manage/grant-page"
@@ -65,11 +65,16 @@ export function MixedPrototype() {
     [openGrant],
   )
 
-  const myWorkAttentionSummary = useMemo(() => {
-    const openIssues = workQueue.items.filter((i) => !i.done).length
-    const activeGrantCount = grants.filter((g) => g.stage !== "Closed" && g.stage !== "Declined").length
-    return `${openIssues} issues need your attention · across ${activeGrantCount} active grants`
-  }, [workQueue.items])
+  const myWorkAttentionSummary = useMemo(
+    () => (
+      <>
+        <span className="text-foreground">Hartford LOI is your only hard deadline today.</span> Maria&apos;s overload is
+        the call worth making.
+        {workQueue.hygienePendingCount > 0 ? ` ${workQueue.hygienePendingCount} data gaps can wait.` : null}
+      </>
+    ),
+    [workQueue.hygienePendingCount],
+  )
 
   /** `overflow:hidden` / `overflow-x:hidden` on ancestors disables `sticky` vs this column’s `overflow-y-auto`. */
   const pageScrollStickyPath = !grant && grain === "all-grants"
@@ -147,35 +152,26 @@ export function MixedPrototype() {
                     )}
                   >
                     <div className="min-h-0 overflow-hidden">
-                      <div className="pb-6">
+                      <div className="pb-2">
                         <Greeting attentionSummary={myWorkAttentionSummary} />
                       </div>
                     </div>
                   </div>
 
                   {grain === "command" ? (
-                    <div className="relative mt-2 flex min-h-0 flex-1 flex-col overflow-visible">
+                    <div className="relative mt-1 flex min-h-0 flex-1 flex-col overflow-visible">
                       <div className="shadow-bleed-scroll min-h-0 flex-1 overflow-auto overscroll-contain px-0 pb-10 [-webkit-overflow-scrolling:touch]">
+                        <div className="sticky top-0 z-30 mb-2 bg-background/95 pb-3 pt-2 backdrop-blur-sm supports-[backdrop-filter]:bg-background/80 dark:bg-background/90">
+                          <GrainNavToggle active={grain} onChange={setGrain} size="panel" />
+                        </div>
                         <div className="mb-6">
                           <MyWorkAttentionStrip items={workQueue.items} />
-                        </div>
-                        <div className="sticky top-0 z-30 bg-background/95 pb-3 pt-2 backdrop-blur-sm supports-[backdrop-filter]:bg-background/80 dark:bg-background/90">
-                          <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
-                            <GrainNavToggle active={grain} onChange={setGrain} size="panel" />
-                            <MyWorkQueueToolbar
-                              queueSort={workQueue.queueSort}
-                              setQueueSort={workQueue.setQueueSort}
-                              hideDone={workQueue.hideDone}
-                              setHideDone={workQueue.setHideDone}
-                            />
-                          </div>
                         </div>
                         <div className="pt-3">
                           <CommandCenterWorkspace
                             onOpenGrant={openGrant}
                             myWorkQueue={workQueue}
                             operatorTaskQueue
-                            stickyOperatorTableHeader
                           />
                         </div>
                       </div>

@@ -53,7 +53,10 @@ import {
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
+  SelectSeparator,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
@@ -330,6 +333,9 @@ const SAVED_VIEWS = [
   { id: "maria", label: "Maria's load" },
 ]
 
+/** First three pipeline lenses — prebuilt Instrumentl views (vs. sample rows + user-saved below). */
+export const INSTRUMENTL_CANNED_VIEW_IDS = new Set<string>(["all", "board-leadership", "funder-portfolio"])
+
 /** Labels minted by the old ephemeral fork flow — drop from saved pickers (dedupe built-ins). */
 const OPERATOR_EPHEMERAL_WORKING_LABELS = new Set(SAVED_VIEWS.map((v) => `Working · ${v.label}`))
 
@@ -514,6 +520,17 @@ export function AllGrants({
     return selectedViewId
   }, [variant, selectedViewId, customViews])
 
+  const viewPickerGroups = useMemo(() => {
+    const filtered = SAVED_VIEWS.filter(
+      (v) =>
+        variant === "operator" || (v.id !== "board-leadership" && v.id !== "funder-portfolio"),
+    )
+    return {
+      instrumentl: filtered.filter((v) => INSTRUMENTL_CANNED_VIEW_IDS.has(v.id)),
+      customPreset: filtered.filter((v) => !INSTRUMENTL_CANNED_VIEW_IDS.has(v.id)),
+    }
+  }, [variant])
+
   const boardAudience = variant === "operator" && builtinSlice === "board-leadership"
   const funderPortfolioLens = variant === "operator" && builtinSlice === "funder-portfolio"
   const periodLensAudience = boardAudience
@@ -585,6 +602,8 @@ export function AllGrants({
   const filterStickyMeasRef = useRef<HTMLDivElement>(null)
   const headerRailWrapRef = useRef<HTMLDivElement>(null)
   const [showPinnedScrollShadow, setShowPinnedScrollShadow] = useState(false)
+  /** Right-edge gradient when the table is wider than the viewport and more columns sit off-screen. */
+  const [showTableRightFade, setShowTableRightFade] = useState(false)
   const [sentinelToggleEl, setSentinelToggleEl] = useState<HTMLDivElement | null>(null)
   const [sentinelFilterEl, setSentinelFilterEl] = useState<HTMLDivElement | null>(null)
   const [sentinelHeaderEl, setSentinelHeaderEl] = useState<HTMLDivElement | null>(null)
@@ -602,17 +621,20 @@ export function AllGrants({
 
   const dockFixedStyles = useMemo(() => {
     const dock = dockPins.dockRect
+    const dockW = dockPins.dockClientWidth ?? dock?.width
     const pt = dockPins.pinToggle
     const pf = dockPins.pinFilter
     const ph = dockPins.pinHeader
-    if (!pageScrollMode || !dock) {
+    if (!pageScrollMode || !dock || dockW == null) {
       return {
         toggle: undefined as CSSProperties | undefined,
         filter: undefined as CSSProperties | undefined,
         header: undefined as CSSProperties | undefined,
       }
     }
-    const base = { left: dock.left, width: dock.width }
+    /** Keep fixed bands inside the viewport (never extend past the right edge on scroll/resize). */
+    const width = Math.min(dockW, typeof window !== "undefined" ? Math.max(0, window.innerWidth - dock.left) : dockW)
+    const base = { left: dock.left, width }
     return {
       toggle: pt ? { position: "fixed" as const, ...base, top: dock.top, zIndex: 60 } : undefined,
       filter: pf
@@ -636,10 +658,14 @@ export function AllGrants({
 
   const updateTableScrollShadows = useCallback(() => {
     const horiz = tableScrollRef.current
-    if (!horiz) return
+    if (!horiz) {
+      setShowTableRightFade(false)
+      return
+    }
     const { scrollLeft, scrollWidth, clientWidth } = horiz
     const maxScroll = Math.max(0, scrollWidth - clientWidth)
     setShowPinnedScrollShadow(maxScroll > 1 && scrollLeft > 1)
+    setShowTableRightFade(maxScroll > 2 && scrollLeft < maxScroll - 2)
   }, [])
 
   const syncHorizScroll = useCallback((from: "header" | "body") => {
@@ -670,7 +696,7 @@ export function AllGrants({
     onOperatorBuiltinSliceChange(builtinSlice)
   }, [variant, builtinSlice, onOperatorBuiltinSliceChange])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!onOperatorViewIdChange || variant !== "operator") return
     onOperatorViewIdChange(selectedViewId)
   }, [variant, selectedViewId, onOperatorViewIdChange])
@@ -1085,8 +1111,9 @@ export function AllGrants({
     setSaveViewName("")
   }
 
+  /** Funder portfolio KPI strip only for the built-in Instrumentl lens — not sample or user-saved views. */
   const funderPortfolioKpiInner =
-    variant === "operator" && funderPortfolioLens ? (
+    variant === "operator" && funderPortfolioLens && selectedViewId === "funder-portfolio" ? (
       <PulseStripFunderPortfolio
         grantsScoped={filteredBase}
         grantsFull={grantsData}
@@ -1107,7 +1134,7 @@ export function AllGrants({
   /** Page scroll (Mixed-alt): same slot as Board / Bridge KPI strips — scrolls with the column. */
   const funderPortfolioKpiPageBetween =
     funderPortfolioKpiInner && pageScrollMode ? (
-      <div className="w-full shrink-0 self-stretch border-b border-border/40 px-2 pb-3 pt-5 sm:px-4 sm:pb-4 sm:pt-6">
+      <div className="w-full shrink-0 self-stretch px-2 pb-3 pt-5 sm:px-4 sm:pb-4 sm:pt-6">
         <div className="min-w-0 space-y-2">{funderPortfolioKpiInner}</div>
       </div>
     ) : null
@@ -1115,7 +1142,7 @@ export function AllGrants({
   /** Non-page-scroll operator layout: KPI sits above the table scrollport. */
   const funderPortfolioKpiBelowToolbar =
     funderPortfolioKpiInner && !pageScrollMode ? (
-      <div className="min-w-0 shrink-0 space-y-2 border-b border-border/40 px-2 pb-3 pt-2 sm:px-4">
+      <div className="min-w-0 shrink-0 space-y-2 px-2 pb-3 pt-2 sm:px-4">
         {funderPortfolioKpiInner}
       </div>
     ) : null
@@ -1205,112 +1232,134 @@ export function AllGrants({
     ],
   )
 
-  const filterToolbarInner = (
-    <>
-      <div className="flex min-w-0 flex-nowrap items-center gap-x-2">
-        <span className="shrink-0 text-[11px] font-medium text-muted-foreground">View</span>
-        <Select
-          value={selectedViewId}
-          onValueChange={(id) => activateOperatorViewFromMenu(id)}
-        >
-          <SelectTrigger size="sm" className="h-7 w-[min(100%,11rem)] text-xs shadow-xs">
-            <SelectValue placeholder="Select view" />
-          </SelectTrigger>
-          <SelectContent>
-            {SAVED_VIEWS.filter(
-              (v) =>
-                variant === "operator" || (v.id !== "board-leadership" && v.id !== "funder-portfolio"),
-            ).map((v) => (
-              <SelectItem key={v.id} value={v.id} className="text-xs">
-                {variant === "operator" && operatorBuiltinAllLabel && v.id === "all"
-                  ? operatorBuiltinAllLabel
-                  : v.label}
-              </SelectItem>
-            ))}
-            {variant === "operator" &&
-              customViews.map((v) => (
-                <SelectItem key={v.id} value={v.id} className="text-xs">
-                  {v.label}
-                </SelectItem>
-              ))}
-          </SelectContent>
-        </Select>
-        {showSaveViewChip && (
-          <button
-            type="button"
-            onClick={() => {
-              setSaveViewName("")
-              setSaveViewOpen(true)
-            }}
-            title="Save columns, filters & grouping as a reusable view"
-            className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md border border-dashed border-border px-2 text-[11px] text-muted-foreground hover:border-foreground/40 hover:text-foreground"
+  /** Inner row scrolls horizontally when needed; avoid `min-w-full` on pinned parents (uses viewport %). */
+  const filterToolbarRow = (
+    <div className="w-full min-w-0 max-w-full overflow-x-auto overflow-y-hidden scrollbar-thin">
+      <div className="flex w-max min-w-full max-w-none flex-nowrap items-center justify-between gap-x-3">
+        <div className="flex min-w-0 flex-nowrap items-center gap-x-2">
+          <span className="shrink-0 text-[11px] font-medium text-muted-foreground">View</span>
+          <Select
+            value={selectedViewId}
+            onValueChange={(id) => activateOperatorViewFromMenu(id)}
           >
-            <Bookmark className="h-3 w-3" />
-            Save view
-          </button>
-        )}
+            <SelectTrigger size="sm" className="h-7 w-[min(100%,11rem)] text-xs shadow-xs">
+              <SelectValue placeholder="Select view" />
+            </SelectTrigger>
+            <SelectContent>
+              {viewPickerGroups.instrumentl.length > 0 ? (
+                <SelectGroup>
+                  <SelectLabel className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    Instrumentl views
+                  </SelectLabel>
+                  {viewPickerGroups.instrumentl.map((v) => (
+                    <SelectItem key={v.id} value={v.id} className="text-xs">
+                      {variant === "operator" && operatorBuiltinAllLabel && v.id === "all"
+                        ? operatorBuiltinAllLabel
+                        : v.label}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              ) : null}
+              {viewPickerGroups.instrumentl.length > 0 &&
+              (viewPickerGroups.customPreset.length > 0 || (variant === "operator" && customViews.length > 0)) ? (
+                <SelectSeparator />
+              ) : null}
+              {viewPickerGroups.customPreset.length > 0 || (variant === "operator" && customViews.length > 0) ? (
+                <SelectGroup>
+                  <SelectLabel className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    {variant === "operator" ? "Custom & saved views" : "Custom views"}
+                  </SelectLabel>
+                  {viewPickerGroups.customPreset.map((v) => (
+                    <SelectItem key={v.id} value={v.id} className="text-xs">
+                      {v.label}
+                    </SelectItem>
+                  ))}
+                  {variant === "operator" &&
+                    customViews.map((v) => (
+                      <SelectItem key={v.id} value={v.id} className="text-xs">
+                        {v.label}
+                      </SelectItem>
+                    ))}
+                </SelectGroup>
+              ) : null}
+            </SelectContent>
+          </Select>
+          {showSaveViewChip && (
+            <button
+              type="button"
+              onClick={() => {
+                setSaveViewName("")
+                setSaveViewOpen(true)
+              }}
+              title="Save columns, filters & grouping as a reusable view"
+              className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md border border-dashed border-border px-2 text-[11px] text-muted-foreground hover:border-foreground/40 hover:text-foreground"
+            >
+              <Bookmark className="h-3 w-3" />
+              Save view
+            </button>
+          )}
 
-        <div className="mx-1 hidden h-5 w-px shrink-0 bg-border sm:block" aria-hidden />
+          <div className="mx-1 hidden h-5 w-px shrink-0 bg-border sm:block" aria-hidden />
 
-        {periodLensAudience ? (
-          <BoardPeriodFilterChip
-            year={filters.periodYtd}
-            options={calendarYearOptions}
-            onChange={(y) => {
-              forkIfCannedOperatorEdit()
-              setFilters({ ...filters, periodYtd: y })
-            }}
-          />
-        ) : (
+          {periodLensAudience ? (
+            <BoardPeriodFilterChip
+              year={filters.periodYtd}
+              options={calendarYearOptions}
+              onChange={(y) => {
+                forkIfCannedOperatorEdit()
+                setFilters({ ...filters, periodYtd: y })
+              }}
+            />
+          ) : (
+            <FilterChip
+              label="Fiscal year"
+              value={filters.fiscalYear}
+              options={fiscalYearOptions}
+              onChange={(v) => {
+                forkIfCannedOperatorEdit()
+                setFilters({ ...filters, fiscalYear: v })
+              }}
+            />
+          )}
           <FilterChip
-            label="Fiscal year"
-            value={filters.fiscalYear}
-            options={fiscalYearOptions}
+            label="Funder type"
+            value={filters.funderType}
+            options={["Federal", "Private", "Corporate", "State", "Local"]}
             onChange={(v) => {
               forkIfCannedOperatorEdit()
-              setFilters({ ...filters, fiscalYear: v })
+              setFilters({ ...filters, funderType: v })
             }}
           />
-        )}
-        <FilterChip
-          label="Funder type"
-          value={filters.funderType}
-          options={["Federal", "Private", "Corporate", "State", "Local"]}
-          onChange={(v) => {
-            forkIfCannedOperatorEdit()
-            setFilters({ ...filters, funderType: v })
-          }}
-        />
-        <FilterChip
-          label="Owner"
-          value={filters.owner ? team.find((t) => t.id === filters.owner)?.name || filters.owner : null}
-          options={team.map((t) => t.name)}
-          onChange={(v) => {
-            forkIfCannedOperatorEdit()
-            const member = team.find((t) => t.name === v)
-            setFilters({ ...filters, owner: member?.id ?? null })
-          }}
-        />
-        <button
-          type="button"
-          className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md border border-dashed border-border px-2 text-[11px] text-muted-foreground hover:border-foreground/40 hover:text-foreground"
-        >
-          <Plus className="h-3 w-3" />
-          Filter
-        </button>
+          <FilterChip
+            label="Owner"
+            value={filters.owner ? team.find((t) => t.id === filters.owner)?.name || filters.owner : null}
+            options={team.map((t) => t.name)}
+            onChange={(v) => {
+              forkIfCannedOperatorEdit()
+              const member = team.find((t) => t.name === v)
+              setFilters({ ...filters, owner: member?.id ?? null })
+            }}
+          />
+          <button
+            type="button"
+            className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md border border-dashed border-border px-2 text-[11px] text-muted-foreground hover:border-foreground/40 hover:text-foreground"
+          >
+            <Plus className="h-3 w-3" />
+            Filter
+          </button>
 
-        <div className="mx-1 h-5 w-px shrink-0 bg-border" aria-hidden />
+          <div className="mx-1 h-5 w-px shrink-0 bg-border" aria-hidden />
 
-        <GroupByPicker
-          value={groupBy}
-          onChange={(v) => {
-            forkIfCannedOperatorEdit()
-            setGroupBy(v)
-          }}
-        />
-      </div>
+          <GroupByPicker
+            value={groupBy}
+            onChange={(v) => {
+              forkIfCannedOperatorEdit()
+              setGroupBy(v)
+            }}
+          />
+        </div>
 
-      <div className="ml-auto flex shrink-0 flex-nowrap items-center justify-end gap-2">
+        <div className="flex shrink-0 flex-nowrap items-center gap-2">
         {showOperatorExport ? (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -1339,14 +1388,15 @@ export function AllGrants({
         {showToolbarNewGrant ? (
           <button
             type="button"
-            className="inline-flex h-7 items-center gap-1 rounded-md bg-primary px-2.5 text-[11px] font-medium text-primary-foreground hover:bg-primary/90"
+            className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md bg-primary px-2.5 text-[11px] font-medium text-primary-foreground hover:bg-primary/90"
           >
             <Plus className="h-3 w-3" />
             New grant
           </button>
         ) : null}
       </div>
-    </>
+      </div>
+    </div>
   )
 
   const bulkBar =
@@ -1593,14 +1643,13 @@ export function AllGrants({
         <>
           <div
             className={cn(
-              "flex flex-nowrap items-center gap-x-2 overflow-x-auto overflow-y-hidden py-2 scrollbar-thin",
-              "mb-1",
+              "mb-1 py-2",
               variant === "operator"
                 ? "border-b-0 bg-transparent px-3 dark:bg-card/40"
                 : "border-b border-border bg-background px-6",
             )}
           >
-            {filterToolbarInner}
+            {filterToolbarRow}
           </div>
           {bulkBar}
           {funderPortfolioKpiBelowToolbar}
@@ -1625,7 +1674,9 @@ export function AllGrants({
                   <div
                     ref={toggleStickyMeasRef}
                     className={cn(
-                      "shrink-0 self-start px-3 py-2.5 min-w-full transition-[background-color,backdrop-filter,border-color]",
+                      // Pinned bands use position:fixed; avoid min-width % (would use viewport vs dock width).
+                      "box-border min-w-0 w-full shrink-0 self-start px-3 py-2.5 transition-[background-color,backdrop-filter,border-color]",
+                      dockPins.pinToggle && "overflow-x-hidden",
                       dockPins.pinToggle
                         ? "border-b border-border/60 bg-background/95 backdrop-blur-sm dark:bg-background/95"
                         : "border-b border-transparent bg-transparent dark:bg-transparent",
@@ -1647,22 +1698,23 @@ export function AllGrants({
               <div
                 ref={filterStickyMeasRef}
                 className={cn(
-                  "min-w-full shrink-0 self-start transition-[background-color,backdrop-filter,border-color]",
+                  "box-border min-w-0 w-full shrink-0 self-start transition-[background-color,backdrop-filter,border-color]",
+                  dockPins.pinFilter && "overflow-x-hidden",
                   dockPins.pinFilter
                     ? "border-b border-border/60 bg-background/95 backdrop-blur-sm dark:bg-background/95"
                     : "border-b border-transparent bg-transparent dark:bg-transparent",
                 )}
                 style={dockFixedStyles.filter}
               >
-                <div className="flex min-w-0 w-full flex-col gap-1">
+                <div className="flex min-w-0 w-full max-w-full flex-col gap-1">
                   <div
                     className={cn(
-                      "flex w-full min-w-0 flex-nowrap items-center gap-x-2 overflow-x-auto overflow-y-hidden py-2 scrollbar-thin",
+                      "w-full min-w-0 max-w-full py-2",
                       variant === "operator" ? "px-3" : "border-b border-border bg-background px-6",
                     )}
                   >
-                  {filterToolbarInner}
-                </div>
+                    {filterToolbarRow}
+                  </div>
                 {filterToolbarAccessory ? (
                   <div className="min-w-0 shrink-0 px-3 pb-1">{filterToolbarAccessory}</div>
                 ) : null}
@@ -1678,32 +1730,49 @@ export function AllGrants({
             {dockPins.pinHeader && headerBandH > 0 ? (
               <div style={{ height: headerBandH }} className="shrink-0" aria-hidden />
             ) : null}
-            <div
-              ref={headerRailWrapRef}
-              className={cn(
-                "w-full min-w-0 shrink-0 self-start border-b border-border/60 transition-[background-color,backdrop-filter]",
-                dockPins.pinHeader
-                  ? "bg-background/95 backdrop-blur-sm dark:bg-background/95"
-                  : "bg-transparent dark:bg-transparent",
-              )}
-              style={dockFixedStyles.header}
-            >
+            <div className="relative min-w-0 w-full">
               <div
-                ref={tableHeaderHorizRef}
-                onScroll={() => syncHorizScroll("header")}
-                className="shadow-bleed-scroll box-border min-w-0 w-full overflow-x-auto overscroll-x-contain"
+                ref={headerRailWrapRef}
+                className={cn(
+                  "box-border min-w-0 w-full shrink-0 self-start border-b border-border/60 transition-[background-color,backdrop-filter]",
+                  variant === "operator" && "relative",
+                  funderPortfolioLens && "border-t-0",
+                  dockPins.pinHeader && "overflow-x-hidden",
+                  dockPins.pinHeader
+                    ? "bg-background/95 backdrop-blur-sm dark:bg-background/95"
+                    : "bg-transparent dark:bg-transparent",
+                )}
+                style={dockFixedStyles.header}
               >
-                <div className="flex min-w-full w-max flex-col">
-                  {columnHeaderRow({ stuck: dockPins.pinHeader, railMount: true })}
+                <div
+                  ref={tableHeaderHorizRef}
+                  onScroll={() => syncHorizScroll("header")}
+                  className="shadow-bleed-scroll box-border min-w-0 w-full overflow-x-auto overscroll-x-contain"
+                >
+                  <div className="flex min-w-full w-max flex-col">
+                    {columnHeaderRow({ stuck: dockPins.pinHeader, railMount: true })}
+                  </div>
                 </div>
+                {variant === "operator" && showTableRightFade && dockPins.pinHeader ? (
+                  <div
+                    className="pointer-events-none absolute inset-y-0 right-0 z-[50] w-28 bg-gradient-to-l from-white from-30% via-white/55 to-transparent dark:from-background dark:via-background/55"
+                    aria-hidden
+                  />
+                ) : null}
               </div>
-            </div>
-            <div
-              ref={tableScrollRef}
-              onScroll={() => syncHorizScroll("body")}
-              className="shadow-bleed-scroll box-border min-w-0 w-full max-w-none shrink-0 self-start overflow-x-auto overscroll-x-contain"
-            >
-              <div className="flex min-w-full w-max flex-col">{grantsTableBodyContent}</div>
+              <div
+                ref={tableScrollRef}
+                onScroll={() => syncHorizScroll("body")}
+                className="shadow-bleed-scroll box-border min-w-0 w-full max-w-none shrink-0 self-start overflow-x-auto overscroll-x-contain"
+              >
+                <div className="flex min-w-full w-max flex-col">{grantsTableBodyContent}</div>
+              </div>
+              {variant === "operator" && showTableRightFade ? (
+                <div
+                  className="pointer-events-none absolute inset-y-0 right-0 z-[35] w-28 bg-gradient-to-l from-white from-30% via-white/55 to-transparent dark:from-background dark:via-background/55"
+                  aria-hidden
+                />
+              ) : null}
             </div>
           </>
         ) : (
@@ -1717,12 +1786,12 @@ export function AllGrants({
             </div>
           </div>
         )}
-        {variant === "operator" && !pageScrollMode && (
+        {variant === "operator" && !pageScrollMode && showTableRightFade ? (
           <div
-            className="pointer-events-none absolute inset-y-0 right-0 z-[25] w-28 bg-gradient-to-l from-white from-30% via-white/55 to-transparent dark:from-card dark:via-card/55"
+            className="pointer-events-none absolute inset-y-0 right-0 z-[35] w-28 bg-gradient-to-l from-white from-30% via-white/55 to-transparent dark:from-background dark:via-background/55"
             aria-hidden
           />
-        )}
+        ) : null}
       </div>
 
       {/* Footer — grant count + totals */}
@@ -2493,7 +2562,7 @@ function ColumnPicker({ visible, onToggle }: { visible: Set<ColKey>; onToggle: (
   return (
     <Popover>
       <PopoverTrigger asChild>
-        <button className="inline-flex h-7 items-center gap-1 rounded-md border border-border bg-background px-2 text-[11px] hover:bg-muted">
+        <button className="inline-flex h-7 shrink-0 items-center gap-1 whitespace-nowrap rounded-md border border-border bg-background px-2 text-[11px] hover:bg-muted">
           <Columns3 className="h-3 w-3" />
           Columns
           <span className="rounded bg-muted px-1 text-[10px] tabular-nums text-muted-foreground">

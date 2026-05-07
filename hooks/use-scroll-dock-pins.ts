@@ -5,6 +5,11 @@ import { useCallback, useLayoutEffect, useState } from "react"
 export type ScrollDockPins = {
   /** Viewport geometry of the vertical scroll container (for `position: fixed` alignment). */
   dockRect: DOMRect | null
+  /**
+   * `scrollEl.clientWidth` — pair with `dockRect.left` for fixed toolbars.
+   * `getBoundingClientRect().width` includes the vertical scrollbar gutter and can clip the right edge.
+   */
+  dockClientWidth: number | null
   pinToggle: boolean
   pinFilter: boolean
   pinHeader: boolean
@@ -24,6 +29,7 @@ export function useScrollDockPins(
 ): ScrollDockPins {
   const [pins, setPins] = useState<ScrollDockPins>({
     dockRect: null,
+    dockClientWidth: null,
     pinToggle: false,
     pinFilter: false,
     pinHeader: false,
@@ -31,7 +37,13 @@ export function useScrollDockPins(
 
   const measure = useCallback(() => {
     if (!enabled || !scrollEl) {
-      setPins({ dockRect: null, pinToggle: false, pinFilter: false, pinHeader: false })
+      setPins({
+        dockRect: null,
+        dockClientWidth: null,
+        pinToggle: false,
+        pinFilter: false,
+        pinHeader: false,
+      })
       return
     }
     const dock = scrollEl.getBoundingClientRect()
@@ -42,6 +54,7 @@ export function useScrollDockPins(
 
     setPins({
       dockRect: dock,
+      dockClientWidth: scrollEl.clientWidth,
       pinToggle: pin(sentinelToggle),
       pinFilter: pin(sentinelFilter),
       pinHeader: pin(sentinelHeader),

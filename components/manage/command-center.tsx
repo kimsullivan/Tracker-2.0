@@ -1,16 +1,16 @@
 "use client"
 
-import { useMemo, useState, type Dispatch, type SetStateAction } from "react"
+import { useMemo, useState, type Dispatch, type ReactNode, type SetStateAction } from "react"
 import { actionQueue, anomalies, grants, team } from "@/lib/manage/data"
 import type { ActionItem, FunderType, IssueNavigationContext, Stage, WorkIssueCategory } from "@/lib/manage/types"
-import { OwnerAvatar, OwnerCell } from "./owner-avatar"
+import { OwnerAvatar } from "./owner-avatar"
+import { StagePill } from "./status-pill"
 import {
   AlertTriangle,
-  ArrowDown,
-  ArrowUp,
   ArrowUpDown,
   ArrowUpRight,
   Check,
+  ChevronRight,
   Clock,
   DollarSign,
   FileWarning,
@@ -22,15 +22,6 @@ import {
 import type { LucideIcon } from "lucide-react"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
-import { Badge } from "@/components/ui/badge"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
 import {
   FUNDER_BREAKDOWN_ORDER,
   sumAward,
@@ -39,7 +30,7 @@ import {
 import type { Grant } from "@/lib/manage/types"
 import { PulseStripBridgeRecharts } from "./all-grants-kpi-tiles"
 import { useMixAltUi } from "@/components/manage/mix-alt-ui-context"
-import { countEffectiveUpcoming, isEffectiveUpcoming } from "@/components/manage/mix-alt-agent"
+import { countEffectiveUpcoming } from "@/components/manage/mix-alt-agent"
 
 const MIXALT_EMPTY_SNOOZE_IDS = new Set<string>()
 
@@ -53,6 +44,7 @@ export type MyWorkQueueState = {
   setItems: Dispatch<SetStateAction<ActionItem[]>>
   hideDone: boolean
   setHideDone: Dispatch<SetStateAction<boolean>>
+  hygienePendingCount: number
   queueSort: QueueSort
   setQueueSort: Dispatch<SetStateAction<QueueSort>>
   sortedVisible: ActionItem[]
@@ -112,7 +104,6 @@ export function CommandCenterWorkspace({
   hideAnomaliesPanel,
   operatorTaskQueue,
   myWorkQueue,
-  stickyOperatorTableHeader,
 }: {
   onOpenGrant: (id: string, ctx?: IssueNavigationContext) => void
   /** Mixed-alt: omit Team load card from the right rail. */
@@ -123,8 +114,6 @@ export function CommandCenterWorkspace({
   operatorTaskQueue?: boolean
   /** Mixed / mixed-alt: shared queue state when toolbar lives beside grain tabs. */
   myWorkQueue?: MyWorkQueueState
-  /** Mixed shells: keep issue queue column headers pinned under the sticky My work / All grants bar while KPIs scroll away. */
-  stickyOperatorTableHeader?: boolean
 }) {
   const showAnomalies = !hideAnomaliesPanel
   const showTeamLoad = !hideTeamLoad
@@ -137,7 +126,6 @@ export function CommandCenterWorkspace({
           onOpenGrant={onOpenGrant}
           operatorShell={operatorTaskQueue}
           myWorkQueue={myWorkQueue}
-          stickyOperatorTableHeader={stickyOperatorTableHeader}
         />
       </div>
     )
@@ -150,7 +138,6 @@ export function CommandCenterWorkspace({
           onOpenGrant={onOpenGrant}
           operatorShell={operatorTaskQueue}
           myWorkQueue={myWorkQueue}
-          stickyOperatorTableHeader={stickyOperatorTableHeader}
         />
       </div>
       <div className="min-w-0 space-y-6">
@@ -169,7 +156,7 @@ export function Greeting({
 }: {
   hideAttentionCallout?: boolean
   /** My work (mixed shells): replaces default grants summary line. */
-  attentionSummary?: string
+  attentionSummary?: ReactNode
   firstName?: string
   showDate?: boolean
 }) {
@@ -183,15 +170,15 @@ export function Greeting({
   const blocked = grants.filter((g) => g.blocked).length
 
   return (
-    <div className="flex flex-col gap-1">
-      <div className="flex items-center gap-3">
-        <h1 className="font-heading text-2xl font-bold text-foreground">
+    <div className="flex flex-col gap-1.5">
+      <div className="flex flex-wrap items-baseline gap-3">
+        <h1 className="m-0 text-[26px] font-semibold tracking-[-0.025em] text-foreground">
           Good morning, <span className="text-primary">{firstName}</span>
         </h1>
         {showDate ? <span className="text-xs text-muted-foreground">· {date}</span> : null}
       </div>
-      <p className="text-sm text-muted-foreground">
-        {attentionSummary ? (
+      <p className="m-0 max-w-[51rem] text-sm leading-[1.55] text-muted-foreground">
+        {attentionSummary != null ? (
           attentionSummary
         ) : (
           <>
@@ -561,6 +548,16 @@ const WORK_ISSUE_CATEGORY_LABEL: Record<WorkIssueCategory, string> = {
   missing_data: "Missing Data",
 }
 
+/** Row groups for My work (prototype). */
+const HYGIENE_ISSUE_CATEGORIES = new Set<WorkIssueCategory>(["missing_data", "setup", "inactive"])
+
+function myWorkSection(item: ActionItem): "today" | "decisions" | "week" {
+  if (item.issueCategory === "overdue" || item.daysOut <= 0) return "today"
+  if (item.issueCategory === "setup" || item.issueCategory === "spend") return "decisions"
+  if (item.issueCategory === "inactive" && item.daysOut > 0 && item.daysOut <= 7) return "decisions"
+  return "week"
+}
+
 function parseTaskLastUpdated(s: string): number {
   const t = Date.parse(s)
   return Number.isNaN(t) ? 0 : t
@@ -605,18 +602,21 @@ function compareQueueItems(a: ActionItem, b: ActionItem, sort: QueueSort): numbe
   return a.id.localeCompare(b.id)
 }
 
-function cycleQueueSort(prev: QueueSort, column: QueueSortKey): QueueSort {
-  if (prev.key === column) return { key: column, dir: prev.dir === "asc" ? "desc" : "asc" }
-  return { key: column, dir: "asc" }
-}
-
 /** Mixed shells: lift queue state so toolbar can sit beside My work / All grants tabs. */
 export function useMyWorkQueueState(): MyWorkQueueState {
   const [items, setItems] = useState<ActionItem[]>(() => [...actionQueue])
   const [hideDone, setHideDone] = useState(false)
   const [queueSort, setQueueSort] = useState<QueueSort>({ key: "urgency", dir: "asc" })
 
-  const visible = useMemo(() => (hideDone ? items.filter((i) => !i.done) : items), [items, hideDone])
+  const hygienePendingCount = useMemo(
+    () => items.filter((i) => !i.done && HYGIENE_ISSUE_CATEGORIES.has(i.issueCategory)).length,
+    [items],
+  )
+
+  const visible = useMemo(() => {
+    return hideDone ? items.filter((i) => !i.done) : [...items]
+  }, [items, hideDone])
+
   const sortedVisible = useMemo(() => {
     const arr = [...visible]
     arr.sort((a, b) => compareQueueItems(a, b, queueSort))
@@ -642,6 +642,7 @@ export function useMyWorkQueueState(): MyWorkQueueState {
     setItems,
     hideDone,
     setHideDone,
+    hygienePendingCount,
     queueSort,
     setQueueSort,
     sortedVisible,
@@ -696,46 +697,99 @@ export function MyWorkQueueToolbar({
   )
 }
 
-/** Matches All grants operator row cells (`text-xs` + `px-3 py-2.5` in `all-grants.tsx`). */
-const AG_OPERATOR_CELL = "text-xs font-normal leading-normal text-foreground"
-
-const ISSUE_CATEGORY_BADGE: Record<WorkIssueCategory, string> = {
-  upcoming:
-    "border-slate-300 bg-slate-50 text-slate-900 dark:border-slate-600 dark:bg-slate-900/45 dark:text-slate-100",
-  spend: "border-rose-200 bg-rose-50 text-rose-950 dark:border-rose-800 dark:bg-rose-950/45 dark:text-rose-50",
-  setup: "border-sky-200 bg-sky-50 text-sky-950 dark:border-sky-700 dark:bg-sky-950/40 dark:text-sky-50",
-  inactive:
-    "border-amber-200 bg-amber-50 text-amber-950 dark:border-amber-700 dark:bg-amber-950/45 dark:text-amber-50",
-  overdue:
-    "border-orange-200 bg-orange-50 text-orange-950 dark:border-orange-700 dark:bg-orange-950/45 dark:text-orange-50",
-  missing_data:
-    "border-emerald-200 bg-emerald-50 text-emerald-950 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-50",
+const MY_WORK_ISSUE_BADGE: Record<
+  WorkIssueCategory,
+  { label: string; className: string }
+> = {
+  overdue: {
+    label: "Blocked",
+    className:
+      "border-0 bg-red-50 text-red-900 dark:bg-red-950/50 dark:text-red-100",
+  },
+  missing_data: {
+    label: "Task",
+    className:
+      "border-0 bg-muted text-muted-foreground dark:bg-muted/80 dark:text-foreground/90",
+  },
+  spend: {
+    label: "Spend",
+    className:
+      "border-0 bg-amber-100/95 text-amber-950 dark:bg-amber-950/40 dark:text-amber-50",
+  },
+  setup: {
+    label: "Suggestion",
+    className: "border-0 bg-sky-100 text-sky-950 dark:bg-sky-950/45 dark:text-sky-50",
+  },
+  inactive: {
+    label: "At risk",
+    className:
+      "border-0 bg-amber-100/95 text-amber-950 dark:bg-amber-950/40 dark:text-amber-50",
+  },
+  upcoming: {
+    label: "Task",
+    className:
+      "border-0 bg-stone-100 text-stone-800 dark:bg-stone-800/70 dark:text-stone-100",
+  },
 }
 
-function IssueCategoryBadge({ category }: { category: WorkIssueCategory }) {
-  return (
-    <Badge
-      variant="outline"
-      className={cn(
-        "max-w-[10rem] truncate border px-2 py-0.5 text-[11px] font-normal leading-tight shadow-none",
-        ISSUE_CATEGORY_BADGE[category],
-      )}
-    >
-      {WORK_ISSUE_CATEGORY_LABEL[category]}
-    </Badge>
-  )
+/** Row accent for list view (matches static reference). */
+type IssueRowKind = "critical" | "warning" | "info" | "neutral"
+
+const rowDotClass: Record<IssueRowKind, string> = {
+  critical: "bg-red-500 dark:bg-red-400",
+  warning: "bg-amber-500 dark:bg-amber-400",
+  info: "bg-blue-500 dark:bg-blue-400",
+  neutral: "bg-muted-foreground/40",
+}
+
+/** Issue pill surfaces (reference list — full pill radius, hug content). */
+const issueTagSurfaceClass: Record<IssueRowKind, string> = {
+  critical: "bg-red-50 text-red-700 dark:bg-red-950/50 dark:text-red-100",
+  warning: "bg-amber-50 text-amber-800 dark:bg-amber-950/45 dark:text-amber-100",
+  info: "bg-blue-50 text-blue-800 dark:bg-blue-950/50 dark:text-blue-100",
+  neutral: "bg-muted text-foreground",
+}
+
+function workIssueRowKind(category: WorkIssueCategory): IssueRowKind {
+  switch (category) {
+    case "overdue":
+      return "critical"
+    case "setup":
+      return "info"
+    case "missing_data":
+      return "neutral"
+    case "upcoming":
+      return "warning"
+    case "inactive":
+    case "spend":
+      return "warning"
+  }
+}
+
+function workListRowFields(item: ActionItem) {
+  const member = team.find((m) => m.id === item.ownerId)
+  const first = member?.name.split(" ")[0]
+  return {
+    grantName: item.grantTitle,
+    title: item.itemLabel,
+    ownerShort: item.ownerId === "elizabeth" ? "You" : (first ?? "—"),
+  }
+}
+
+function myWorkIssueHeadline(item: ActionItem): string {
+  if (item.issueCategory === "upcoming" && item.daysOut <= 1) return "Due today"
+  if (item.issueCategory === "overdue") return "Blocked"
+  return MY_WORK_ISSUE_BADGE[item.issueCategory].label
 }
 
 function ActionQueue({
   onOpenGrant,
   operatorShell,
   myWorkQueue,
-  stickyOperatorTableHeader,
 }: {
   onOpenGrant: (id: string, ctx?: IssueNavigationContext) => void
   operatorShell?: boolean
   myWorkQueue?: MyWorkQueueState
-  stickyOperatorTableHeader?: boolean
 }) {
   if (myWorkQueue) {
     return (
@@ -744,7 +798,6 @@ function ActionQueue({
         operatorShell={operatorShell}
         q={myWorkQueue}
         embeddedToolbar={false}
-        stickyOperatorTableHeader={stickyOperatorTableHeader}
       />
     )
   }
@@ -769,13 +822,11 @@ function ActionQueueInner({
   operatorShell,
   q,
   embeddedToolbar,
-  stickyOperatorTableHeader,
 }: {
   onOpenGrant: (id: string, ctx?: IssueNavigationContext) => void
   operatorShell?: boolean
   q: MyWorkQueueState
   embeddedToolbar: boolean
-  stickyOperatorTableHeader?: boolean
 }) {
   const { sortedVisible, toggle } = q
 
@@ -795,14 +846,7 @@ function ActionQueueInner({
         </div>
       ) : null}
       {operatorShell ? (
-        <OperatorTaskTable
-          sortedVisible={sortedVisible}
-          toggle={toggle}
-          onOpenGrant={onOpenGrant}
-          queueSort={q.queueSort}
-          setQueueSort={q.setQueueSort}
-          stickyHeader={stickyOperatorTableHeader}
-        />
+        <OperatorTaskTable sortedVisible={sortedVisible} onOpenGrant={onOpenGrant} />
       ) : (
         <SimpleTaskList sortedVisible={sortedVisible} toggle={toggle} onOpenGrant={onOpenGrant} />
       )}
@@ -883,251 +927,171 @@ function SimpleTaskList({
   )
 }
 
-function QueueSortTh({
-  label,
-  column,
-  sort,
-  setSort,
-  className,
-}: {
-  label: string
-  column: QueueSortKey
-  sort: QueueSort
-  setSort: Dispatch<SetStateAction<QueueSort>>
-  className?: string
-}) {
-  const active = sort.key === column
-  return (
-    <TableHead className={className}>
-      <button
-        type="button"
-        className={cn(
-          "group inline-flex w-full min-w-0 cursor-pointer items-center justify-start gap-1 border-0 bg-transparent px-0 py-1 text-left outline-none transition-colors",
-          active ? "font-medium text-foreground" : "text-muted-foreground hover:text-foreground",
-          "focus-visible:text-foreground focus-visible:underline focus-visible:underline-offset-4",
-        )}
-        onClick={() => setSort((prev) => cycleQueueSort(prev, column))}
-      >
-        <span className="min-w-0">{label}</span>
-        {active ? (
-          sort.dir === "asc" ? (
-            <ArrowUp className="h-3 w-3 shrink-0 opacity-90" aria-hidden />
-          ) : (
-            <ArrowDown className="h-3 w-3 shrink-0 opacity-90" aria-hidden />
-          )
-        ) : (
-          <ArrowUpDown
-            className="h-3 w-3 shrink-0 opacity-35 transition-opacity group-hover:opacity-60"
-            aria-hidden
-          />
-        )}
-      </button>
-    </TableHead>
-  )
+function myWorkSectionMeta(sec: { id: string; rows: ActionItem[] }): string {
+  const n = sec.rows.length
+  if (sec.id === "today") {
+    const overdue = sec.rows.filter((i) => i.issueCategory === "overdue" || i.daysOut < 0).length
+    return `${n} items · ${overdue} overdue`
+  }
+  if (sec.id === "decisions") {
+    return `${n} items · system-noticed`
+  }
+  return `${n} items`
 }
 
 function OperatorTaskTable({
   sortedVisible,
-  toggle,
   onOpenGrant,
-  queueSort,
-  setQueueSort,
-  stickyHeader,
 }: {
   sortedVisible: ActionItem[]
-  toggle: (id: string) => void
   onOpenGrant: (id: string, ctx?: IssueNavigationContext) => void
-  queueSort: QueueSort
-  setQueueSort: Dispatch<SetStateAction<QueueSort>>
-  /** Mixed My work: pin column headers under the sticky grain toggle rail when KPIs scroll away. */
-  stickyHeader?: boolean
 }) {
+  const sections = useMemo(() => {
+    const buckets: Record<"today" | "decisions" | "week", ActionItem[]> = {
+      today: [],
+      decisions: [],
+      week: [],
+    }
+    for (const item of sortedVisible) {
+      buckets[myWorkSection(item)].push(item)
+    }
+    const out: { id: string; title: string; rows: ActionItem[] }[] = []
+    if (buckets.today.length) out.push({ id: "today", title: "Today", rows: buckets.today })
+    if (buckets.decisions.length)
+      out.push({ id: "decisions", title: "Decisions worth making", rows: buckets.decisions })
+    if (buckets.week.length) out.push({ id: "week", title: "This week", rows: buckets.week })
+    return out
+  }, [sortedVisible])
+
   return (
-    <Table
-      containerClassName={cn(
-        "px-0 py-0 sm:px-0 sm:py-0",
-        /**
-         * `Table` defaults to `overflow-x-auto` on the wrapper. That inner scrollport steals
-         * `position: sticky` from `thead`, so headers vanish or never pin to the My work column
-         * scroller. Let horizontal overflow propagate to the mixed shell’s `overflow-y-auto`
-         * region so thead sticks to the same vertical scroll root as the grain toggle bar.
-         */
-        stickyHeader && "overflow-x-visible",
-      )}
-      className={cn(
-        "min-w-[720px] text-xs font-normal [&_th]:h-auto [&_th]:min-h-0 [&_th]:py-1.5 [&_th]:font-normal [&_th]:leading-tight",
-      )}
-    >
-      <TableHeader
-        className={cn(
-          "[&_tr]:border-b [&_tr]:border-border/25",
-          stickyHeader &&
-            "sticky top-[4.5rem] z-[25] border-b border-border/80 bg-background shadow-[0_1px_0_0_hsl(var(--border)/0.35)] dark:bg-background",
-        )}
-      >
-        <TableRow className="border-0 bg-transparent hover:bg-transparent [&>th]:border-0">
-          <TableHead
-            className={cn(
-              AG_OPERATOR_CELL,
-              "w-10 px-3 text-muted-foreground sm:px-4 !h-auto !min-h-0",
-            )}
-          >
-            <span className="sr-only">Done</span>
-          </TableHead>
-          <QueueSortTh
-            label="Item"
-            column="item"
-            sort={queueSort}
-            setSort={setQueueSort}
-            className={cn(
-              AG_OPERATOR_CELL,
-              "min-w-[14rem] whitespace-normal px-3 text-muted-foreground !h-auto !min-h-0",
-            )}
-          />
-          <QueueSortTh
-            label="Grant name"
-            column="grant"
-            sort={queueSort}
-            setSort={setQueueSort}
-            className={cn(AG_OPERATOR_CELL, "min-w-[11rem] px-3 text-muted-foreground !h-auto !min-h-0")}
-          />
-          <QueueSortTh
-            label="Owner"
-            column="owner"
-            sort={queueSort}
-            setSort={setQueueSort}
-            className={cn(AG_OPERATOR_CELL, "px-3 text-muted-foreground !h-auto !min-h-0")}
-          />
-          <QueueSortTh
-            label="Last updated"
-            column="updated"
-            sort={queueSort}
-            setSort={setQueueSort}
-            className={cn(AG_OPERATOR_CELL, "px-3 text-muted-foreground !h-auto !min-h-0")}
-          />
-          <QueueSortTh
-            label="Issue"
-            column="issue"
-            sort={queueSort}
-            setSort={setQueueSort}
-            className={cn(AG_OPERATOR_CELL, "px-3 text-muted-foreground !h-auto !min-h-0")}
-          />
-          <TableHead
-            className={cn(
-              AG_OPERATOR_CELL,
-              "w-[1%] px-3 pr-4 text-right text-muted-foreground sm:pr-6 !h-auto !min-h-0",
-            )}
-          >
-            <span className="sr-only">Action</span>
-          </TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody className="[&_tr]:border-0">
-        {sortedVisible.map((item) => (
-          <OperatorTaskRow
-            key={item.id}
-            item={item}
-            onToggle={() => toggle(item.id)}
-            onOpen={() =>
-              onOpenGrant(item.grantId, {
-                fieldKey: item.highlightFieldKey,
-                fieldLabel: item.highlightFieldLabel,
-                reason: item.highlightReason,
-              })
-            }
-          />
-        ))}
-      </TableBody>
-    </Table>
+    <div className="min-w-0 space-y-7">
+      {sections.map((sec) => (
+        <section key={sec.id} className="mb-7 last:mb-0">
+          <div className="mb-3 flex flex-wrap items-center gap-2.5 px-1">
+            <h2 className="m-0 text-base font-semibold tracking-[-0.01em] text-foreground">{sec.title}</h2>
+            <span className="text-xs text-muted-foreground">{myWorkSectionMeta(sec)}</span>
+          </div>
+          <div className="overflow-hidden rounded-lg border border-elevated-stroke bg-card dark:border-border">
+            {sec.rows.map((item) => (
+              <OperatorWorkListRow
+                key={item.id}
+                item={item}
+                onOpen={() =>
+                  onOpenGrant(item.grantId, {
+                    fieldKey: item.highlightFieldKey,
+                    fieldLabel: item.highlightFieldLabel,
+                    reason: item.highlightReason,
+                  })
+                }
+              />
+            ))}
+          </div>
+        </section>
+      ))}
+
+    </div>
   )
 }
 
-function OperatorTaskRow({
+function OperatorWorkListRow({
   item,
-  onToggle,
   onOpen,
 }: {
   item: ActionItem
-  onToggle: () => void
   onOpen: () => void
 }) {
+  const row = workListRowFields(item)
+  const kind = workIssueRowKind(item.issueCategory)
+  const headline = myWorkIssueHeadline(item)
   const mix = useMixAltUi()
-  const threshold = mix?.upcomingThresholdDays ?? 14
   const snoozedIds = mix?.snoozedIssueIds ?? MIXALT_EMPTY_SNOOZE_IDS
   const rowSnoozed = Boolean(item.snoozed || snoozedIds.has(item.id))
-  const effectiveUp = isEffectiveUpcoming(item, threshold, snoozedIds)
-  const upcomingOutsideWindow =
-    item.issueCategory === "upcoming" && !item.done && !rowSnoozed && !effectiveUp
 
   return (
-    <TableRow
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={onOpen}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault()
+          onOpen()
+        }
+      }}
+      aria-label={`Open ${row.title}`}
       className={cn(
-        "border-0 bg-transparent transition-none hover:bg-muted/45 dark:hover:bg-muted/35",
+        "group grid w-full cursor-pointer items-center gap-x-6 gap-y-3 border-t border-elevated-stroke px-4 py-3 text-left text-xs leading-normal transition-colors first:border-t-0 hover:bg-muted/50 dark:border-t-border",
+        "max-[760px]:grid-cols-[minmax(0,1fr)_24px]",
+        "min-[761px]:grid-cols-[minmax(0,30rem)_minmax(176px,248px)_minmax(0,1fr)_140px_112px_28px]",
         item.done && "opacity-50",
         rowSnoozed && "opacity-60",
       )}
     >
-      <TableCell className={cn("px-3 py-3.5 sm:px-4")}>
-        <button
-          type="button"
+      <div className="min-w-0 max-w-[30rem] max-[760px]:max-w-none max-[760px]:col-start-1 max-[760px]:row-start-1 min-[761px]:col-start-1 min-[761px]:row-start-1">
+        <div className="text-xs font-medium leading-snug text-foreground">{row.title}</div>
+        <p className="mt-0.5 text-xs leading-snug text-muted-foreground">{item.detail}</p>
+      </div>
+
+      <div
+        className={cn(
+          "flex min-w-0 w-full flex-col items-start gap-1.5 justify-self-start text-left min-[761px]:pl-3",
+          "max-[760px]:col-start-1 max-[760px]:row-start-2 max-[760px]:pl-0 min-[761px]:col-start-2 min-[761px]:row-start-1 min-[761px]:self-center",
+        )}
+      >
+        <a
+          href={`#grant-${item.grantId}`}
+          title={row.grantName}
           onClick={(e) => {
+            e.preventDefault()
             e.stopPropagation()
-            onToggle()
+            onOpen()
           }}
-          className={[
-            "flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors",
-            item.done ? "border-chart-3 bg-chart-3 text-white" : "border-input hover:border-foreground",
-          ].join(" ")}
-          aria-label={item.done ? "Mark not done" : "Mark done"}
+          className="block w-full min-w-0 truncate text-xs font-medium text-foreground underline decoration-foreground/30 underline-offset-2 hover:decoration-foreground/60 focus:outline-none focus-visible:rounded-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
         >
-          {item.done && <Check className="h-3 w-3" strokeWidth={3} />}
-        </button>
-      </TableCell>
-      <TableCell className={cn(AG_OPERATOR_CELL, "whitespace-normal px-3 py-3.5")}>
-        <div className={cn("flex flex-col gap-0.5", item.done && "line-through")}>
-          <span className="font-semibold text-foreground">{item.itemLabel}</span>
-          <span className="font-normal text-muted-foreground">{item.detail}</span>
-        </div>
-      </TableCell>
-      <TableCell className={cn(AG_OPERATOR_CELL, "px-3 py-3.5")}>
-        <button
-          type="button"
-          onClick={onOpen}
+          {row.grantName}
+        </a>
+        <StagePill stage={item.stage} audience="internal" className="max-w-full" />
+      </div>
+
+      <div aria-hidden className="max-[760px]:hidden min-[761px]:col-start-3 min-[761px]:row-start-1" />
+
+      <div
+        className={cn(
+          "flex min-w-0 justify-start justify-self-start",
+          "max-[760px]:col-start-1 max-[760px]:row-start-3 min-[761px]:col-start-4 min-[761px]:row-start-1 min-[761px]:self-center",
+        )}
+      >
+        <span
           className={cn(
-            AG_OPERATOR_CELL,
-            "max-w-[18rem] truncate text-left font-medium text-foreground hover:underline",
+            "inline-flex w-fit items-center gap-1.5 whitespace-nowrap rounded-[100px] px-2.5 py-0.5 text-xs font-medium leading-snug",
+            issueTagSurfaceClass[kind],
           )}
         >
-          {item.grantTitle}
-        </button>
-      </TableCell>
-      <TableCell className={cn(AG_OPERATOR_CELL, "whitespace-normal px-3 py-3.5")}>
-        <OwnerCell id={item.ownerId} nameClassName={AG_OPERATOR_CELL} />
-      </TableCell>
-      <TableCell className={cn(AG_OPERATOR_CELL, "px-3 py-3.5 tabular-nums")}>{item.lastUpdatedDisplay}</TableCell>
-      <TableCell className="px-3 py-3.5">
-        <div className="flex flex-wrap items-center gap-1.5">
-          <IssueCategoryBadge category={item.issueCategory} />
-          {rowSnoozed ? (
-            <Badge variant="outline" className="text-[10px] font-normal text-muted-foreground">
-              Snoozed
-            </Badge>
-          ) : null}
-          {upcomingOutsideWindow ? (
-            <span className="text-[10px] text-muted-foreground">Outside alert window</span>
-          ) : null}
-        </div>
-      </TableCell>
-      <TableCell className="px-3 py-3.5 pr-4 text-right sm:pr-6">
-        <button
-          type="button"
-          onClick={onOpen}
-          className="inline-flex h-7 max-w-[11rem] shrink-0 items-center justify-center truncate rounded-md border border-border bg-background px-2 text-[11px] font-medium text-foreground shadow-xs hover:bg-muted"
-        >
-          {item.ctaLabel}
-        </button>
-      </TableCell>
-    </TableRow>
+          <span className={cn("size-2 shrink-0 rounded-full", rowDotClass[kind])} aria-hidden />
+          {headline}
+        </span>
+      </div>
+
+      <div
+        className={cn(
+          "flex min-w-0 items-center justify-start gap-2 justify-self-start",
+          "max-[760px]:col-start-1 max-[760px]:row-start-4 min-[761px]:col-start-5 min-[761px]:row-start-1",
+        )}
+      >
+        <OwnerAvatar id={item.ownerId} size={20} />
+        <div className="min-w-0 truncate text-left text-xs font-medium text-foreground">{row.ownerShort}</div>
+      </div>
+
+      <ChevronRight
+        className={cn(
+          "size-5 shrink-0 text-muted-foreground/50 transition-all group-hover:translate-x-0.5 group-hover:text-foreground",
+          "max-[760px]:col-start-2 max-[760px]:row-start-1 max-[760px]:row-span-4 max-[760px]:self-center",
+          "min-[761px]:col-start-6 min-[761px]:row-start-1",
+        )}
+        aria-hidden
+        strokeWidth={2}
+      />
+    </div>
   )
 }
 

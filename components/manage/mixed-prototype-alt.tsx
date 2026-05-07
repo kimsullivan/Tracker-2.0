@@ -7,11 +7,11 @@ import { cn } from "@/lib/utils"
 import { GrantPage } from "@/components/manage/grant-page"
 import { TopBar } from "@/components/manage/top-bar"
 import { GrainBar, GrainNavToggle, type Grain } from "@/components/manage/grain-bar"
-import { CommandCenterWorkspace, Greeting, MyWorkAttentionStrip, PulseStripBridge, MyWorkQueueToolbar, useMyWorkQueueState } from "@/components/manage/command-center"
+import { CommandCenterWorkspace, Greeting, MyWorkAttentionStrip, PulseStripBridge, useMyWorkQueueState } from "@/components/manage/command-center"
 import { PulseStripBoardLeadership } from "@/components/manage/all-grants-kpi-tiles"
 import { passesKpiDrill, type KpiDrill } from "@/lib/manage/kpi-bridge"
 import type { Grant, IssueNavigationContext } from "@/lib/manage/types"
-import { AllGrants, type AllGrantsFilterApi } from "@/components/manage/all-grants"
+import { AllGrants, INSTRUMENTL_CANNED_VIEW_IDS, type AllGrantsFilterApi } from "@/components/manage/all-grants"
 import { ChatPanelStandalone, getElizabethAssistantInitialMessages } from "@/components/manage/chat-panel.standalone"
 import type { ChatTaskAction } from "@/components/manage/chat-inline-viz"
 import { grants } from "@/lib/manage/data"
@@ -86,6 +86,10 @@ export function MixedPrototypeAlt() {
     setKpiDrill(null)
   }, [operatorBuiltinSlice])
 
+  useLayoutEffect(() => {
+    if (operatorViewId.startsWith("custom-")) setKpiDrill(null)
+  }, [operatorViewId])
+
   const workQueue = useMyWorkQueueState()
 
   const chatSuggestions = useMemo(() => getMixAltSuggestions({ grain, operatorViewId }), [grain, operatorViewId])
@@ -98,6 +102,9 @@ export function MixedPrototypeAlt() {
   const [chatSavedViews, setChatSavedViews] = useState<string[]>([])
 
   const mixAltInitialMessages = useMemo(() => getElizabethAssistantInitialMessages(), [])
+
+  /** Pulse / Board bridge KPIs only for the three Instrumentl built-ins — not sample presets or user-saved views. */
+  const showInstrumentlOperatorKpis = INSTRUMENTL_CANNED_VIEW_IDS.has(operatorViewId)
 
   const agentSnapshot = useCallback(() => {
     const snap = {
@@ -236,11 +243,16 @@ export function MixedPrototypeAlt() {
     [currentViewLabel],
   )
 
-  const myWorkAttentionSummary = useMemo(() => {
-    const openIssues = workQueue.items.filter((i) => !i.done).length
-    const activeGrantCount = grants.filter((g) => g.stage !== "Closed" && g.stage !== "Declined").length
-    return `${openIssues} issues need your attention · across ${activeGrantCount} active grants`
-  }, [workQueue.items])
+  const myWorkAttentionSummary = useMemo(
+    () => (
+      <>
+        <span className="text-foreground">Hartford LOI is your only hard deadline today.</span> Maria&apos;s overload is
+        the call worth making.
+        {workQueue.hygienePendingCount > 0 ? ` ${workQueue.hygienePendingCount} data gaps can wait.` : null}
+      </>
+    ),
+    [workQueue.hygienePendingCount],
+  )
 
   const contextLabel = grant ? grant.title : grain === "command" ? "My work" : "All grants table"
 
@@ -325,7 +337,7 @@ export function MixedPrototypeAlt() {
                     )}
                   >
                     <div className="min-h-0 overflow-hidden">
-                      <div className="pb-6">
+                      <div className="pb-2">
                         <Greeting
                           hideAttentionCallout
                           attentionSummary={myWorkAttentionSummary}
@@ -337,21 +349,13 @@ export function MixedPrototypeAlt() {
                   </div>
 
                   {grain === "command" ? (
-                    <div className="relative mt-2 flex min-h-0 flex-1 flex-col overflow-visible">
+                    <div className="relative mt-1 flex min-h-0 flex-1 flex-col overflow-visible">
                       <div className="shadow-bleed-scroll min-h-0 flex-1 overflow-auto overscroll-contain px-0 pb-10 [-webkit-overflow-scrolling:touch]">
+                        <div className="sticky top-0 z-30 mb-2 bg-background/95 pb-3 pt-2 backdrop-blur-sm supports-[backdrop-filter]:bg-background/80 dark:bg-background/90">
+                          <GrainNavToggle active={grain} onChange={handleGrainChange} size="panel" />
+                        </div>
                         <div className="mb-6 space-y-6">
                           <MyWorkAttentionStrip items={workQueue.items} />
-                        </div>
-                        <div className="sticky top-0 z-30 bg-background/95 pb-3 pt-2 backdrop-blur-sm supports-[backdrop-filter]:bg-background/80 dark:bg-background/90">
-                          <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
-                            <GrainNavToggle active={grain} onChange={handleGrainChange} size="panel" />
-                            <MyWorkQueueToolbar
-                              queueSort={workQueue.queueSort}
-                              setQueueSort={workQueue.setQueueSort}
-                              hideDone={workQueue.hideDone}
-                              setHideDone={workQueue.setHideDone}
-                            />
-                          </div>
                         </div>
                         <div className="pt-3">
                           <CommandCenterWorkspace
@@ -360,7 +364,6 @@ export function MixedPrototypeAlt() {
                             hideAnomaliesPanel
                             operatorTaskQueue
                             myWorkQueue={workQueue}
-                            stickyOperatorTableHeader
                           />
                         </div>
                       </div>
@@ -380,28 +383,34 @@ export function MixedPrototypeAlt() {
                           pageScrollParent={grantsScrollEl}
                           stickyFilterPrefix={<GrainNavToggle active={grain} onChange={handleGrainChange} size="panel" />}
                           pageScrollBetweenFiltersAndTable={
-                            operatorBuiltinSlice === "board-leadership" ? (
-                              <div className="self-stretch px-2 pb-3 pt-5 sm:px-4 sm:pb-4 sm:pt-6">
-                                <PulseStripBoardLeadership
-                                  baseScope={tableScopeGrants}
-                                  drill={kpiDrill}
-                                  onDrill={handleKpiDrill}
-                                />
-                              </div>
-                            ) : operatorBuiltinSlice === "funder-portfolio" ? null : (
-                              <div className="self-stretch px-2 pb-3 pt-5 sm:px-4 sm:pb-4 sm:pt-6">
-                                <PulseStripBridge
-                                  baseScope={tableScopeGrants}
-                                  drill={kpiDrill}
-                                  onDrill={handleKpiDrill}
-                                />
-                              </div>
-                            )
+                            !showInstrumentlOperatorKpis
+                              ? null
+                              : operatorBuiltinSlice === "board-leadership"
+                                ? (
+                                    <div className="self-stretch px-2 pb-3 pt-5 sm:px-4 sm:pb-4 sm:pt-6">
+                                      <PulseStripBoardLeadership
+                                        baseScope={tableScopeGrants}
+                                        drill={kpiDrill}
+                                        onDrill={handleKpiDrill}
+                                      />
+                                    </div>
+                                  )
+                                : operatorBuiltinSlice === "funder-portfolio"
+                                  ? null
+                                  : (
+                                      <div className="self-stretch px-2 pb-3 pt-5 sm:px-4 sm:pb-4 sm:pt-6">
+                                        <PulseStripBridge
+                                          baseScope={tableScopeGrants}
+                                          drill={kpiDrill}
+                                          onDrill={handleKpiDrill}
+                                        />
+                                      </div>
+                                    )
                           }
                           operatorBuiltinAllLabel="Where are we?"
                           operatorHomeViewResetKey={operatorHomeViewResetKey}
                           kpiBridgeFilter={
-                            operatorBuiltinSlice === "funder-portfolio"
+                            !showInstrumentlOperatorKpis || operatorBuiltinSlice === "funder-portfolio"
                               ? null
                               : kpiDrill
                                 ? (g) => passesKpiDrill(kpiDrill, g)
@@ -424,7 +433,7 @@ export function MixedPrototypeAlt() {
 
               {(grain === "all-grants" || grain === "command") && operatorChatOpen ? (
                 <aside className="relative z-[70] flex min-h-0 w-full shrink-0 flex-col overflow-visible bg-transparent px-0 pt-6 pb-6 md:h-full md:max-h-none md:max-w-[26rem] md:w-[min(26rem,32vw)] md:shrink-0 md:pl-1 md:pt-8 md:pb-6 md:pr-4 xl:pr-5">
-                  <div className="operator-chat-enter flex h-[min(42vh,26rem)] max-h-[480px] min-h-[220px] w-full shrink-0 flex-col overflow-visible rounded-xl border border-elevated-stroke bg-background/95 shadow-sm backdrop-blur-sm dark:bg-card dark:shadow-sm md:h-full md:max-h-none md:min-h-0">
+                  <div className="operator-chat-enter flex h-[min(calc(42vh+12px),calc(26rem+12px))] max-h-[492px] min-h-[232px] w-full shrink-0 flex-col overflow-visible rounded-xl border border-elevated-stroke bg-background/95 shadow-sm backdrop-blur-sm dark:bg-card dark:shadow-sm md:h-[calc(100%+12px)] md:max-h-none md:min-h-0">
                     <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl">
                       <ChatPanelStandalone
                         variant="manage"

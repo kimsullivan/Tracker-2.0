@@ -648,12 +648,12 @@ export function ChatPanelStandalone({
 
       <div
         className={cn(
-          "shrink-0 space-y-2",
+          "shrink-0 flex flex-col",
           isEmbedded ? "px-4 py-4" : "px-3 py-3",
           isEmbedded ? "bg-background" : "bg-card/50 backdrop-blur-sm",
         )}
       >
-        <div className="flex flex-wrap gap-1">
+        <div className="mb-2 flex flex-wrap gap-1">
           {suggestionList.map((s) => (
             <button
               key={s}
