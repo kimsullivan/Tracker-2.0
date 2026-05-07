@@ -241,7 +241,7 @@ export function AllActiveTileShell({ children, shellClassName }: { children: Rea
     <div
       style={{ fontFamily: KPI_CHART_FONT }}
       className={cn(
-        "flex h-[220px] flex-col rounded-[12px] border-[0.5px] p-[18px] gap-1.5",
+        "flex h-[220px] w-full min-w-0 flex-col rounded-[12px] border-[0.5px] p-[18px] gap-1.5",
         "bg-[color:#FFFFFF] dark:bg-card dark:border-border",
         "border-[rgba(0,0,0,0.08)]",
         shellClassName,
@@ -261,14 +261,14 @@ export function AllActiveTileHeader({
   right?: ReactNode
 }) {
   return (
-    <div className="flex items-center justify-between">
+    <div className="flex w-full min-w-0 items-center gap-2">
       <span
-        className="text-[11px] font-bold uppercase tracking-[0.06em]"
+        className="min-w-0 flex-1 text-[11px] font-bold uppercase leading-tight tracking-[0.06em]"
         style={{ color: AG_KPI_TOKENS.textTertiary }}
       >
         {label}
       </span>
-      {right}
+      {right != null ? <div className="ml-auto flex shrink-0 items-center justify-end">{right}</div> : null}
     </div>
   )
 }

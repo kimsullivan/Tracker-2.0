@@ -1134,7 +1134,7 @@ export function AllGrants({
   /** Page scroll (Mixed-alt): same slot as Board / Bridge KPI strips — scrolls with the column. */
   const funderPortfolioKpiPageBetween =
     funderPortfolioKpiInner && pageScrollMode ? (
-      <div className="w-full shrink-0 self-stretch px-2 pb-3 pt-5 sm:px-4 sm:pb-4 sm:pt-6">
+      <div className="w-full shrink-0 self-stretch px-2 pb-3 pt-2 sm:px-4 sm:pb-4 sm:pt-3">
         <div className="min-w-0 space-y-2">{funderPortfolioKpiInner}</div>
       </div>
     ) : null
@@ -1235,8 +1235,8 @@ export function AllGrants({
   /** Inner row scrolls horizontally when needed; avoid `min-w-full` on pinned parents (uses viewport %). */
   const filterToolbarRow = (
     <div className="w-full min-w-0 max-w-full overflow-x-auto overflow-y-hidden scrollbar-thin">
-      <div className="flex w-max min-w-full max-w-none flex-nowrap items-center justify-between gap-x-3">
-        <div className="flex min-w-0 flex-nowrap items-center gap-x-2">
+      <div className="flex min-w-full w-max max-w-none flex-nowrap items-center gap-x-3">
+        <div className="flex min-w-0 flex-1 flex-nowrap items-center gap-x-2">
           <span className="shrink-0 text-[11px] font-medium text-muted-foreground">View</span>
           <Select
             value={selectedViewId}
@@ -1359,7 +1359,7 @@ export function AllGrants({
           />
         </div>
 
-        <div className="flex shrink-0 flex-nowrap items-center gap-2">
+        <div className="ml-auto flex shrink-0 flex-nowrap items-center gap-2">
         {showOperatorExport ? (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -1447,7 +1447,7 @@ export function AllGrants({
     ro.observe(el)
     setFilterStickyH(el.getBoundingClientRect().height)
     return () => ro.disconnect()
-  }, [pageScrollMode, selected.size, funderPortfolioLens])
+  }, [pageScrollMode, funderPortfolioLens])
 
   useLayoutEffect(() => {
     if (!pageScrollMode) {
@@ -1651,8 +1651,8 @@ export function AllGrants({
           >
             {filterToolbarRow}
           </div>
-          {bulkBar}
           {funderPortfolioKpiBelowToolbar}
+          {bulkBar}
         </>
       )}
 
@@ -1718,7 +1718,6 @@ export function AllGrants({
                 {filterToolbarAccessory ? (
                   <div className="min-w-0 shrink-0 px-3 pb-1">{filterToolbarAccessory}</div>
                 ) : null}
-                {bulkBar}
                 </div>
               </div>
             </div>
@@ -1726,6 +1725,7 @@ export function AllGrants({
             {pageScrollBetweenFiltersAndTable ? (
               <div className="w-full shrink-0 self-start">{pageScrollBetweenFiltersAndTable}</div>
             ) : null}
+            {bulkBar}
             <div ref={setSentinelHeaderEl} className="pointer-events-none h-px w-full shrink-0" aria-hidden />
             {dockPins.pinHeader && headerBandH > 0 ? (
               <div style={{ height: headerBandH }} className="shrink-0" aria-hidden />

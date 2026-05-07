@@ -387,7 +387,7 @@ export function MixedPrototypeAlt() {
                               ? null
                               : operatorBuiltinSlice === "board-leadership"
                                 ? (
-                                    <div className="self-stretch px-2 pb-3 pt-5 sm:px-4 sm:pb-4 sm:pt-6">
+                                    <div className="self-stretch px-2 pb-3 pt-2 sm:px-4 sm:pb-4 sm:pt-3">
                                       <PulseStripBoardLeadership
                                         baseScope={tableScopeGrants}
                                         drill={kpiDrill}
@@ -398,7 +398,7 @@ export function MixedPrototypeAlt() {
                                 : operatorBuiltinSlice === "funder-portfolio"
                                   ? null
                                   : (
-                                      <div className="self-stretch px-2 pb-3 pt-5 sm:px-4 sm:pb-4 sm:pt-6">
+                                      <div className="self-stretch px-2 pb-3 pt-2 sm:px-4 sm:pb-4 sm:pt-3">
                                         <PulseStripBridge
                                           baseScope={tableScopeGrants}
                                           drill={kpiDrill}
@@ -432,8 +432,8 @@ export function MixedPrototypeAlt() {
               </section>
 
               {(grain === "all-grants" || grain === "command") && operatorChatOpen ? (
-                <aside className="relative z-[70] flex min-h-0 w-full shrink-0 flex-col overflow-visible bg-transparent px-0 pt-6 pb-6 md:h-full md:max-h-none md:max-w-[26rem] md:w-[min(26rem,32vw)] md:shrink-0 md:pl-1 md:pt-8 md:pb-6 md:pr-4 xl:pr-5">
-                  <div className="operator-chat-enter flex h-[min(calc(42vh+12px),calc(26rem+12px))] max-h-[492px] min-h-[232px] w-full shrink-0 flex-col overflow-visible rounded-xl border border-elevated-stroke bg-background/95 shadow-sm backdrop-blur-sm dark:bg-card dark:shadow-sm md:h-[calc(100%+12px)] md:max-h-none md:min-h-0">
+                <aside className="relative z-[70] flex min-h-0 w-full shrink-0 flex-col overflow-visible bg-transparent px-0 pt-5 pb-6 md:h-full md:max-h-none md:max-w-[26rem] md:w-[min(26rem,32vw)] md:shrink-0 md:pl-1 md:pt-5 md:pb-6 md:pr-4 xl:pr-5">
+                  <div className="operator-chat-enter flex h-[min(calc(42vh+12px),calc(26rem+12px))] max-h-[492px] min-h-[232px] w-full shrink-0 flex-col overflow-visible rounded-xl border border-elevated-stroke bg-background/95 shadow-sm backdrop-blur-sm dark:bg-card dark:shadow-sm md:h-auto md:max-h-none md:min-h-0 md:flex-1">
                     <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl">
                       <ChatPanelStandalone
                         variant="manage"

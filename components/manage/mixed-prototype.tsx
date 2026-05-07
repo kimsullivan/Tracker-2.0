@@ -181,7 +181,7 @@ export function MixedPrototype() {
                       ref={setGrantsScrollPort}
                       className="shadow-bleed-scroll flex min-h-0 flex-1 basis-0 flex-col overflow-y-auto overscroll-contain [-webkit-overflow-scrolling:touch]"
                     >
-                      <div className="shrink-0 self-stretch px-2 pb-3 pt-5 sm:px-4 sm:pb-4 sm:pt-6">
+                      <div className="shrink-0 self-stretch px-2 pb-3 pt-2 sm:px-4 sm:pb-4 sm:pt-3">
                         <PulseStripRechartsStatic />
                       </div>
                       <div className="min-w-0 shrink-0">
@@ -202,8 +202,8 @@ export function MixedPrototype() {
 
               {/* Operator chat: outside primary shell; beside table, not under KPIs */}
               {(grain === "all-grants" || grain === "command") && operatorChatOpen ? (
-                <aside className="relative z-[70] flex min-h-0 w-full shrink-0 flex-col overflow-visible bg-transparent px-0 pt-6 pb-6 md:h-full md:max-h-none md:max-w-[26rem] md:w-[min(26rem,32vw)] md:shrink-0 md:pl-1 md:pt-8 md:pb-6 md:pr-4 xl:pr-5">
-                  <div className="operator-chat-enter flex h-[min(42vh,26rem)] max-h-[480px] min-h-[220px] w-full shrink-0 flex-col overflow-visible rounded-xl border border-elevated-stroke bg-background/95 shadow-sm backdrop-blur-sm dark:bg-card dark:shadow-sm md:h-full md:max-h-none md:min-h-0">
+                <aside className="relative z-[70] flex min-h-0 w-full shrink-0 flex-col overflow-visible bg-transparent px-0 pt-5 pb-6 md:h-full md:max-h-none md:max-w-[26rem] md:w-[min(26rem,32vw)] md:shrink-0 md:pl-1 md:pt-5 md:pb-6 md:pr-4 xl:pr-5">
+                  <div className="operator-chat-enter flex h-[min(42vh,26rem)] max-h-[480px] min-h-[220px] w-full shrink-0 flex-col overflow-visible rounded-xl border border-elevated-stroke bg-background/95 shadow-sm backdrop-blur-sm dark:bg-card dark:shadow-sm md:h-auto md:max-h-none md:min-h-0 md:flex-1">
                     <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl">
                       <ChatPanelStandalone
                         variant="manage"
