@@ -298,15 +298,6 @@ img.broken-image-fallback {
   }
 }
 
-@keyframes chat-text-shimmer {
-  0% {
-    background-position: 200% center;
-  }
-  100% {
-    background-position: -200% center;
-  }
-}
-
 @keyframes thinking-enter {
   from {
     opacity: 0;
@@ -367,17 +358,25 @@ img.broken-image-fallback {
   }
 }
 
-/* Thinking / loading line — shimmer sweep (used by assistant rail) */
+/* Thinking line — no background fill; soft opacity pulse on text only */
+@keyframes chat-thinking-pulse {
+  0%,
+  100% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
 .chat-thinking-shimmer {
-  background: linear-gradient(
-    90deg,
-    color-mix(in oklab, var(--muted-foreground) 40%, transparent),
-    color-mix(in oklab, var(--foreground) 88%, transparent),
-    color-mix(in oklab, var(--muted-foreground) 40%, transparent)
-  );
-  background-size: 220% 100%;
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  animation: chat-text-shimmer 2.4s ease-in-out infinite;
+  color: var(--foreground);
+  animation: chat-thinking-pulse 1.6s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-thinking-shimmer {
+    animation: none;
+    opacity: 0.85;
+  }
 }

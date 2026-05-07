@@ -144,28 +144,17 @@ export function MixedPrototype() {
                     grain === "command" ? "pt-8 pb-6" : "pb-3 pt-2 md:pb-4 md:pt-3",
                   )}
                 >
-                  {/* Greeting collapses smoothly when switching to All grants (grid-rows 1fr → 0fr). */}
-                  <div
-                    className={cn(
-                      "grid shrink-0 transition-[grid-template-rows] duration-300 ease-out motion-reduce:transition-none",
-                      grain === "command" ? "grid-rows-[1fr]" : "grid-rows-[0fr]",
-                    )}
-                  >
-                    <div className="min-h-0 overflow-hidden">
-                      <div className="pb-2">
-                        <Greeting attentionSummary={myWorkAttentionSummary} />
-                      </div>
-                    </div>
-                  </div>
-
                   {grain === "command" ? (
                     <div className="relative mt-1 flex min-h-0 flex-1 flex-col overflow-visible">
                       <div className="shadow-bleed-scroll min-h-0 flex-1 overflow-auto overscroll-contain px-0 pb-10 [-webkit-overflow-scrolling:touch]">
-                        <div className="sticky top-0 z-30 mb-2 bg-background/95 pb-3 pt-2 backdrop-blur-sm supports-[backdrop-filter]:bg-background/80 dark:bg-background/90">
-                          <GrainNavToggle active={grain} onChange={setGrain} size="panel" />
+                        <div className="pb-2">
+                          <Greeting attentionSummary={myWorkAttentionSummary} />
                         </div>
                         <div className="mb-6">
                           <MyWorkAttentionStrip items={workQueue.items} />
+                        </div>
+                        <div className="sticky top-0 z-30 mb-2 bg-background/95 pb-3 pt-2 backdrop-blur-sm supports-[backdrop-filter]:bg-background/80 dark:bg-background/90">
+                          <GrainNavToggle active={grain} onChange={setGrain} size="panel" />
                         </div>
                         <div className="pt-3">
                           <CommandCenterWorkspace
