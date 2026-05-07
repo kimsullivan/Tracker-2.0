@@ -10,18 +10,28 @@ import {
   ArrowUpDown,
   ArrowUpRight,
   Check,
-  ChevronRight,
   Clock,
   DollarSign,
   FileWarning,
   Flag,
   Info,
+  ChevronDown,
   TrendingDown,
   TrendingUp,
 } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import {
   FUNDER_BREAKDOWN_ORDER,
   sumAward,
@@ -554,6 +564,7 @@ const HYGIENE_ISSUE_CATEGORIES = new Set<WorkIssueCategory>(["missing_data", "se
 function myWorkSection(item: ActionItem): "today" | "decisions" | "week" {
   if (item.issueCategory === "overdue" || item.daysOut <= 0) return "today"
   if (item.issueCategory === "setup" || item.issueCategory === "spend") return "decisions"
+  if (item.issueCategory === "missing_data" && item.highlightFieldKey === "owner") return "decisions"
   if (item.issueCategory === "inactive" && item.daysOut > 0 && item.daysOut <= 7) return "decisions"
   return "week"
 }
@@ -726,7 +737,7 @@ const MY_WORK_ISSUE_BADGE: Record<
       "border-0 bg-amber-100/95 text-amber-950 dark:bg-amber-950/40 dark:text-amber-50",
   },
   upcoming: {
-    label: "Task",
+    label: "Upcoming",
     className:
       "border-0 bg-stone-100 text-stone-800 dark:bg-stone-800/70 dark:text-stone-100",
   },
@@ -772,7 +783,12 @@ function workListRowFields(item: ActionItem) {
   return {
     grantName: item.grantTitle,
     title: item.itemLabel,
-    ownerShort: item.ownerId === "elizabeth" ? "You" : (first ?? "—"),
+    ownerShort:
+      item.ownerId === "elizabeth"
+        ? "You"
+        : item.ownerId === "unassigned"
+          ? "Unassigned"
+          : (first ?? "—"),
   }
 }
 
@@ -828,7 +844,34 @@ function ActionQueueInner({
   q: MyWorkQueueState
   embeddedToolbar: boolean
 }) {
-  const { sortedVisible, toggle } = q
+  const { sortedVisible, toggle, setItems, items } = q
+
+  function markTaskOk(id: string) {
+    setItems((prev) =>
+      prev.map((i) => {
+        if (i.id !== id || i.done) return i
+        toast("Marked OK", {
+          description: i.itemLabel,
+          action: { label: "Undo", onClick: () => toggle(id) },
+        })
+        return { ...i, done: true }
+      }),
+    )
+  }
+
+  function snoozeTask(id: string) {
+    const label = items.find((i) => i.id === id)?.itemLabel
+    setItems((prev) => prev.map((i) => (i.id === id ? { ...i, snoozed: true } : i)))
+    toast("Snoozed", {
+      description: label ?? "Task",
+    })
+  }
+
+  function reassignTask(id: string, ownerId: string) {
+    setItems((prev) => prev.map((i) => (i.id === id ? { ...i, ownerId } : i)))
+    const name = team.find((m) => m.id === ownerId)?.name ?? ownerId
+    toast("Reassigned", { description: name })
+  }
 
   return (
     <div
@@ -846,7 +889,13 @@ function ActionQueueInner({
         </div>
       ) : null}
       {operatorShell ? (
-        <OperatorTaskTable sortedVisible={sortedVisible} onOpenGrant={onOpenGrant} />
+        <OperatorTaskTable
+          sortedVisible={sortedVisible}
+          onOpenGrant={onOpenGrant}
+          onMarkTaskOk={markTaskOk}
+          onSnoozeTask={snoozeTask}
+          onReassignTask={reassignTask}
+        />
       ) : (
         <SimpleTaskList sortedVisible={sortedVisible} toggle={toggle} onOpenGrant={onOpenGrant} />
       )}
@@ -942,9 +991,15 @@ function myWorkSectionMeta(sec: { id: string; rows: ActionItem[] }): string {
 function OperatorTaskTable({
   sortedVisible,
   onOpenGrant,
+  onMarkTaskOk,
+  onSnoozeTask,
+  onReassignTask,
 }: {
   sortedVisible: ActionItem[]
   onOpenGrant: (id: string, ctx?: IssueNavigationContext) => void
+  onMarkTaskOk: (id: string) => void
+  onSnoozeTask: (id: string) => void
+  onReassignTask: (id: string, ownerId: string) => void
 }) {
   const sections = useMemo(() => {
     const buckets: Record<"today" | "decisions" | "week", ActionItem[]> = {
@@ -983,6 +1038,9 @@ function OperatorTaskTable({
                     reason: item.highlightReason,
                   })
                 }
+                onMarkOk={() => onMarkTaskOk(item.id)}
+                onSnooze={() => onSnoozeTask(item.id)}
+                onReassign={(ownerId) => onReassignTask(item.id, ownerId)}
               />
             ))}
           </div>
@@ -993,12 +1051,20 @@ function OperatorTaskTable({
   )
 }
 
+const TEAM_REASSIGN_OPTIONS = team.filter((m) => m.id !== "unassigned")
+
 function OperatorWorkListRow({
   item,
   onOpen,
+  onMarkOk,
+  onSnooze,
+  onReassign,
 }: {
   item: ActionItem
   onOpen: () => void
+  onMarkOk: () => void
+  onSnooze: () => void
+  onReassign: (ownerId: string) => void
 }) {
   const row = workListRowFields(item)
   const kind = workIssueRowKind(item.issueCategory)
@@ -1006,30 +1072,21 @@ function OperatorWorkListRow({
   const mix = useMixAltUi()
   const snoozedIds = mix?.snoozedIssueIds ?? MIXALT_EMPTY_SNOOZE_IDS
   const rowSnoozed = Boolean(item.snoozed || snoozedIds.has(item.id))
+  const snoozeDisabled = rowSnoozed
 
   return (
     <div
-      role="button"
-      tabIndex={0}
-      onClick={onOpen}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault()
-          onOpen()
-        }
-      }}
-      aria-label={`Open ${row.title}`}
       className={cn(
-        "group grid w-full cursor-pointer items-center gap-x-6 gap-y-3 border-t border-elevated-stroke px-4 py-3 text-left text-xs leading-normal transition-colors first:border-t-0 hover:bg-muted/50 dark:border-t-border",
-        "max-[760px]:grid-cols-[minmax(0,1fr)_24px]",
-        "min-[761px]:grid-cols-[minmax(0,30rem)_minmax(176px,248px)_minmax(0,1fr)_140px_112px_28px]",
+        "group grid w-full items-center gap-x-6 gap-y-3 border-t border-elevated-stroke px-4 py-3 text-left text-xs leading-normal transition-colors first:border-t-0 hover:bg-muted/30 dark:border-t-border",
+        "max-[760px]:grid-cols-[minmax(0,1fr)_minmax(10.5rem,13rem)]",
+        "min-[761px]:grid-cols-[minmax(0,30rem)_minmax(176px,248px)_minmax(0,1fr)_140px_112px_minmax(176px,max-content)]",
         item.done && "opacity-50",
         rowSnoozed && "opacity-60",
       )}
     >
       <div className="min-w-0 max-w-[30rem] max-[760px]:max-w-none max-[760px]:col-start-1 max-[760px]:row-start-1 min-[761px]:col-start-1 min-[761px]:row-start-1">
         <div className="text-xs font-medium leading-snug text-foreground">{row.title}</div>
-        <p className="mt-0.5 text-xs leading-snug text-muted-foreground">{item.detail}</p>
+        <p className="mt-0.5 max-w-prose text-pretty text-xs leading-relaxed text-muted-foreground">{item.detail}</p>
       </div>
 
       <div
@@ -1082,15 +1139,78 @@ function OperatorWorkListRow({
         <div className="min-w-0 truncate text-left text-xs font-medium text-foreground">{row.ownerShort}</div>
       </div>
 
-      <ChevronRight
+      <div
         className={cn(
-          "size-5 shrink-0 text-muted-foreground/50 transition-all group-hover:translate-x-0.5 group-hover:text-foreground",
+          "flex justify-end min-[761px]:col-start-6 min-[761px]:row-start-1",
           "max-[760px]:col-start-2 max-[760px]:row-start-1 max-[760px]:row-span-4 max-[760px]:self-center",
-          "min-[761px]:col-start-6 min-[761px]:row-start-1",
         )}
-        aria-hidden
-        strokeWidth={2}
-      />
+      >
+        <DropdownMenu>
+          <div
+            className={cn(
+              "inline-flex h-8 w-full max-w-full shrink-0 overflow-hidden rounded-md border border-input bg-background text-xs",
+              "dark:bg-input/30",
+            )}
+          >
+            <button
+              type="button"
+              className={cn(
+                "inline-flex min-w-0 flex-1 items-center justify-center px-2.5 font-medium text-foreground",
+                "hover:bg-muted/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+              )}
+              onClick={(e) => {
+                e.stopPropagation()
+                onOpen()
+              }}
+            >
+              <span className="truncate">Take action</span>
+            </button>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                className={cn(
+                  "inline-flex shrink-0 items-center justify-center border-l border-input px-2 text-muted-foreground",
+                  "hover:bg-muted hover:text-foreground",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                )}
+                aria-label={`More actions for ${row.title}`}
+                onClick={(e) => e.stopPropagation()}
+                onPointerDown={(e) => e.stopPropagation()}
+              >
+                <ChevronDown className="size-4" strokeWidth={2} aria-hidden />
+              </button>
+            </DropdownMenuTrigger>
+          </div>
+          <DropdownMenuContent
+            align="end"
+            className="w-52"
+            onClick={(e) => e.stopPropagation()}
+            onPointerDown={(e) => e.stopPropagation()}
+          >
+            <DropdownMenuItem disabled={item.done} onSelect={() => onMarkOk()}>
+              Mark as OK
+            </DropdownMenuItem>
+            <DropdownMenuItem disabled={snoozeDisabled} onSelect={() => onSnooze()}>
+              Snooze
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger>Reassign</DropdownMenuSubTrigger>
+              <DropdownMenuSubContent className="max-h-64 overflow-y-auto">
+                {TEAM_REASSIGN_OPTIONS.map((m) => (
+                  <DropdownMenuItem
+                    key={m.id}
+                    disabled={m.id === item.ownerId}
+                    onSelect={() => onReassign(m.id)}
+                  >
+                    {m.name}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
     </div>
   )
 }
