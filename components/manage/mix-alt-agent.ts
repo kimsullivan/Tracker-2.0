@@ -14,10 +14,16 @@ export type MixAltEffect =
   | { type: "set_discovery"; deadlineNextMonth: boolean; tasksNone: boolean }
   | { type: "clear_discovery" }
   | { type: "add_saved_view_label"; label: string }
+  /** Open Save view dialog; optional name prefills the input (user confirms). */
+  | { type: "open_save_view_dialog"; suggestedName?: string }
   | { type: "set_group_by"; groupBy: GroupBy }
   | { type: "clear_grant_toolbar_filters" }
   | { type: "set_funder_type_filter"; funderType: FunderType | null }
   | { type: "set_sort"; column: ColKey | null; dir?: SortDir }
+  | { type: "set_fiscal_year_filter"; fiscalYear: string | null }
+  | { type: "set_column_visible"; column: ColKey; visible: boolean }
+  | { type: "move_column_before"; moved: ColKey; before: ColKey }
+  | { type: "move_column_after"; moved: ColKey; after: ColKey | null }
 
 export type MixAltAgentSnapshot = {
   filteredBaseGrants: Grant[]
@@ -31,6 +37,8 @@ export type MixAltAgentSnapshot = {
   discoveryDeadlineNextMonth: boolean
   discoveryTasksNone: boolean
   chatSavedViewLabels: string[]
+  /** Distinct FY labels (`FY2026`, …) from seed grants — matches All grants Fiscal year chip. */
+  fiscalYearLabels: string[]
 }
 
 export type MixAltAgentTurn = {
@@ -248,11 +256,12 @@ function parseTableGroupBy(t: string): GroupBy | null {
   ) {
     return "none"
   }
+  if (t.includes("funder type") || t.includes("funder-type")) return "funderType"
   if (t.includes("owner")) return "owner"
   if (t.includes("stage") || (t.includes("status") && !/\bsort\b/.test(t))) return "stage"
   if (t.includes("project")) return "projectGroup"
   if (t.includes("deadline")) return "deadline"
-  if (t.includes("funder")) return "funderType"
+  if (t.includes("funder")) return "funder"
   return null
 }
 
@@ -268,13 +277,157 @@ function parseFunderTypeKeyword(t: string): FunderType | null {
 function resolveOwnerFilterFromText(t: string): string | null {
   if (t.includes("filter to me") || (t.includes("my grants") && t.includes("only"))) return "elizabeth"
   if (t.includes("elizabeth only") || t.includes("only elizabeth")) return "elizabeth"
+  const afterOwner = t.match(/\bowner\s+([a-z]+)\b/)
+  if (afterOwner) {
+    const tok = afterOwner[1]!
+    for (const m of team) {
+      const first = m.name.split(" ")[0]!.toLowerCase()
+      if (first === tok || (tok.length >= 2 && first.startsWith(tok))) return m.id
+    }
+  }
   for (const m of team) {
     const full = m.name.toLowerCase()
     const first = m.name.split(" ")[0]!.toLowerCase()
+    const firstOk = first.length >= 2 ? first : full
     if (full.length >= 3 && t.includes(full)) return m.id
-    if (first.length >= 3 && t.includes(first)) return m.id
+    if (firstOk.length >= 2 && new RegExp(`\\b${firstOk}\\b`).test(t)) return m.id
   }
   return null
+}
+
+/** FY labels for toolbar chip — same rule as All grants `fiscalYearOptions`. */
+export function fiscalYearLabelsForGrants(grants: Grant[]): string[] {
+  const set = new Set<number>()
+  for (const g of grants) {
+    const d = new Date(g.deadline.split("T")[0] + "T12:00:00")
+    if (Number.isNaN(d.getTime())) continue
+    const y = d.getFullYear()
+    const m = d.getMonth()
+    const fy = m >= 6 ? y + 1 : y
+    if (Number.isFinite(fy)) set.add(fy)
+  }
+  return Array.from(set)
+    .sort((a, b) => a - b)
+    .map((fy) => `FY${fy}`)
+}
+
+const COLUMN_PHRASES: [string, ColKey][] = [
+  ["amount requested", "amountRequested"],
+  ["notification date", "notificationDate"],
+  ["project group", "projectGroup"],
+  ["last updated", "lastUpdated"],
+  ["funding source", "fundingSource"],
+  ["weighted", "amountRequested"],
+  ["indirect", "indirect"],
+  ["renewal", "renewal"],
+  ["priority", "priority"],
+  ["deadline", "deadline"],
+  ["requested", "amountRequested"],
+  ["funder", "funder"],
+  ["status", "status"],
+  ["stage", "status"],
+  ["grant", "grant"],
+  ["title", "grant"],
+  ["owner", "owner"],
+  ["award", "award"],
+  ["amount", "award"],
+  ["cycle", "cycle"],
+  ["fain", "fain"],
+  ["cfda", "cfda"],
+  ["period", "period"],
+  ["match", "match"],
+]
+
+function pickColumnFromText(t: string): ColKey | null {
+  const sorted = [...COLUMN_PHRASES].sort((a, b) => b[0].length - a[0].length)
+  for (const [phrase, col] of sorted) {
+    if (t.includes(phrase)) return col
+  }
+  return null
+}
+
+function parseColumnMove(t: string): MixAltEffect | null {
+  const bc = t.match(/\bmove\s+([\w\s]+?)\s+(?:column\s+)?before\s+([\w\s]+)\b/)
+  if (bc) {
+    const a = pickColumnFromText(bc[1]!.trim().toLowerCase())
+    const b = pickColumnFromText(bc[2]!.trim().toLowerCase())
+    if (a && b && a !== "grant" && b !== "grant") return { type: "move_column_before", moved: a, before: b }
+  }
+  const ac = t.match(/\bmove\s+([\w\s]+?)\s+(?:column\s+)?after\s+([\w\s]+)\b/)
+  if (ac) {
+    const a = pickColumnFromText(ac[1]!.trim().toLowerCase())
+    const b = pickColumnFromText(ac[2]!.trim().toLowerCase())
+    if (a && b && a !== "grant" && b !== "grant") return { type: "move_column_after", moved: a, after: b }
+  }
+  const putb = t.match(/\bput\s+([\w\s]+?)\s+(?:column\s+)?before\s+([\w\s]+)\b/)
+  if (putb) {
+    const a = pickColumnFromText(putb[1]!.trim().toLowerCase())
+    const b = pickColumnFromText(putb[2]!.trim().toLowerCase())
+    if (a && b && a !== "grant" && b !== "grant") return { type: "move_column_before", moved: a, before: b }
+  }
+  return null
+}
+
+function parseColumnVisibility(t: string): { column: ColKey; visible: boolean } | null {
+  const mentionsCol =
+    /\b(column|columns)\b/.test(t) ||
+    /\b(hide|show|add|remove)\b/.test(t) ||
+    /\bturn (?:on|off)\b/.test(t)
+  if (!mentionsCol) return null
+  const hide =
+    /\b(hide|remove|turn off)\b/.test(t) &&
+    !/\bshow\b/.test(t) &&
+    !/\badd\b/.test(t) &&
+    !/\bturn on\b/.test(t)
+  const show = /\b(show|add|turn on)\b/.test(t) || (t.includes("display") && t.includes("column"))
+  if (!hide && !show) return null
+  const col = pickColumnFromText(t)
+  if (!col || col === "grant") return null
+  return { column: col, visible: show }
+}
+
+function parseFiscalYearFromText(t: string, labels: string[]): string | null {
+  const m = t.match(/\bfy\s*(\d{4})\b/) || t.match(/\bfiscal\s*(?:year\s*)?(\d{4})\b/)
+  if (!m) return null
+  const label = `FY${m[1]}`
+  if (labels.length > 0 && !labels.includes(label)) return null
+  return label
+}
+
+export function mixAltSaveViewNudgeViz(): ChatViz[] {
+  return [
+    {
+      kind: "inline_actions",
+      actions: [
+        { label: "Save view…", href: "mixalt://open-save-view" },
+        { label: "Not now", href: "mixalt://dismiss-save-nudge" },
+      ],
+    },
+  ]
+}
+
+const TABLE_LAYOUT_EFFECT_TYPES = new Set<MixAltEffect["type"]>([
+  "set_owner_filter",
+  "clear_owner_filter",
+  "set_foundation_filter",
+  "clear_foundation_filter",
+  "set_group_by",
+  "clear_grant_toolbar_filters",
+  "set_funder_type_filter",
+  "set_sort",
+  "set_fiscal_year_filter",
+  "set_column_visible",
+  "move_column_before",
+  "move_column_after",
+])
+
+/** Effects that mutate the All grants toolbar / table layout (for save-view nudges). */
+export function countTableLayoutEffects(effects: MixAltEffect[]): number {
+  let n = 0
+  for (const e of effects) {
+    if (TABLE_LAYOUT_EFFECT_TYPES.has(e.type)) n += 1
+  }
+  return n
 }
 
 function parseSortFromText(t: string): { column: ColKey; dir: SortDir } | null {
@@ -356,6 +509,53 @@ export function matchMixAltAgentTurn(raw: string, snap: MixAltAgentSnapshot): Mi
     }
   }
 
+  if ((t.includes("clear") || t.includes("reset")) && t.includes("fiscal")) {
+    return {
+      agentBody: "Done. Cleared the fiscal year filter.",
+      effects: [{ type: "set_fiscal_year_filter", fiscalYear: null }],
+    }
+  }
+
+  const fyPick = parseFiscalYearFromText(t, snap.fiscalYearLabels)
+  if (
+    fyPick &&
+    (t.includes("filter") ||
+      t.includes("set") ||
+      t.includes("show") ||
+      t.includes("only") ||
+      t.includes("narrow") ||
+      t.includes("fiscal") ||
+      /\bto\s+fy/.test(t))
+  ) {
+    return {
+      agentBody: `Done. Fiscal year filter set to ${fyPick}.`,
+      effects: [{ type: "set_fiscal_year_filter", fiscalYear: fyPick }],
+    }
+  }
+  if ((/\bfy\s*\d{4}\b/.test(t) || /\bfiscal\s*(?:year\s*)?\d{4}/.test(t)) && fyPick === null) {
+    return {
+      agentBody:
+        "That fiscal year isn’t in the current data set—pick an FY that appears in the Fiscal year chip on the toolbar.",
+      effects: [],
+    }
+  }
+
+  const colMove = parseColumnMove(t)
+  if (colMove) {
+    return {
+      agentBody: "Done. Reordered columns.",
+      effects: [colMove],
+    }
+  }
+
+  const colVis = parseColumnVisibility(t)
+  if (colVis) {
+    return {
+      agentBody: `Done. ${colVis.visible ? "Showing" : "Hiding"} the ${colVis.column} column.`,
+      effects: [{ type: "set_column_visible", column: colVis.column, visible: colVis.visible }],
+    }
+  }
+
   const gbChat = parseTableGroupBy(t)
   if (gbChat) {
     const gbLabel: Record<GroupBy, string> = {
@@ -397,8 +597,10 @@ export function matchMixAltAgentTurn(raw: string, snap: MixAltAgentSnapshot): Mi
     ownerPick &&
     !/\bgroup\b/.test(t) &&
     !/\bsort\b/.test(t) &&
+    !parseColumnMove(t) &&
     (t.includes("filter") ||
       t.includes("only") ||
+      /\bowner\s+[a-z]+\b/.test(t) ||
       (t.includes("show") && (t.includes("grant") || t.includes("portfolio"))) ||
       t.includes("filter to me"))
   ) {
@@ -504,14 +706,11 @@ export function matchMixAltAgentTurn(raw: string, snap: MixAltAgentSnapshot): Mi
       effects: [{ type: "set_discovery", deadlineNextMonth: true, tasksNone: true }],
       viz: [
         {
-          kind: "tasks",
-          title: "Next step",
-          items: [
+          kind: "inline_actions",
+          actions: [
             {
-              title: "Save as view",
-              subtitle: "Stores deadline + task filters",
-              tone: "action",
-              actions: [{ label: "Save discovery view", href: "mixalt://save-discovery-view" }],
+              label: "Name & save view",
+              href: `mixalt://open-save-view/suggested/${encodeURIComponent("Due next month · no open tasks")}`,
             },
           ],
         },
@@ -523,7 +722,7 @@ export function matchMixAltAgentTurn(raw: string, snap: MixAltAgentSnapshot): Mi
   if (t.includes("what can you do") || (t === "help") || t.includes("what can you")) {
     return {
       agentBody:
-        "I can filter, sort, group, save views, explain why something's flagged, tune thresholds, run bulk actions, or generate reports. Anything you can do via clicks, you can do by asking. Try the suggestion chips below.",
+        "I can set fiscal year, funder type, and owner filters; change grouping and sort; show, hide, or reorder columns; and save views. Try the suggestion chips below — for example “filter federal”, “group by deadline”, or “hide CFDA column”.",
       effects: [],
     }
   }
@@ -533,42 +732,57 @@ export function matchMixAltAgentTurn(raw: string, snap: MixAltAgentSnapshot): Mi
     (t.includes("export") && (t.includes("pdf") || t.includes("report"))) ||
     t.includes("generate a report") ||
     t.includes("export this view") ||
-    (t.includes("export") && t.includes("as a pdf"))
+    (t.includes("export") && t.includes("as a pdf")) ||
+    (/\bsave\s+(?:this\s+)?(?:the\s+)?view\b/.test(t) && t.includes("pdf"))
   ) {
     return {
-      agentBody: "I'll export the current view. Confirm audience archetype?",
+      agentBody: `I'll export this view (${snap.currentViewLabel}) as PDF. Which audience should it speak to?`,
       effects: [],
       viz: [
         {
-          kind: "tasks",
-          items: [
-            {
-              title: "Pick archetype",
-              subtitle: snap.currentViewLabel,
-              tone: "decision",
-              actions: [
-                { label: "Internal", href: "mixalt://export-audience/Internal" },
-                { label: "Board", href: "mixalt://export-audience/Board" },
-                { label: "Exec Leadership", href: "mixalt://export-audience/Exec%20Leadership" },
-                { label: "Finance", href: "mixalt://export-audience/Finance" },
-                { label: "Program Director", href: "mixalt://export-audience/Program%20Director" },
-              ],
-            },
+          kind: "inline_actions",
+          actions: [
+            { label: "Internal", href: "mixalt://export-audience/Internal" },
+            { label: "Board", href: "mixalt://export-audience/Board" },
+            { label: "Exec Leadership", href: "mixalt://export-audience/Exec%20Leadership" },
+            { label: "Finance", href: "mixalt://export-audience/Finance" },
+            { label: "Program Director", href: "mixalt://export-audience/Program%20Director" },
           ],
         },
       ],
     }
   }
 
-  // Save view
-  if (t.includes("save this view") || t.includes("save the view")) {
-    const q = raw.match(/["']([^"']+)["']/)
-    const as = raw.match(/\bas\s+(.+)$/i)
-    const name = (q?.[1] ?? as?.[1] ?? "Untitled view").trim()
-    const label = name.replace(/\.$/, "") || "Untitled view"
+  // Save view — always open naming dialog (optional prefill from quoted / "save view as …")
+  if (
+    !/\b(don't|do not)\s+save\b/.test(t) &&
+    (/\bsave\s+(?:this\s+)?(?:the\s+)?view\b/.test(t) ||
+      /\bsave\s+view\b/.test(t) ||
+      /\bsave\s+(?:the\s+)?current\s+layout\b/.test(t))
+  ) {
+    const quoted = raw.match(/["']([^"']+)["']/)
+    const saveAs = raw.match(/\bsave\s+(?:this\s+)?(?:the\s+)?view\s+as\s+(.+)$/i)
+    let suggested: string | undefined
+    if (quoted?.[1]?.trim()) suggested = quoted[1].trim()
+    else if (saveAs?.[1]) {
+      const cap = saveAs[1]
+        .trim()
+        .replace(/\.$/, "")
+        .split("\n")[0]!
+        .trim()
+        .replace(/^["']|["']$/g, "")
+      if (cap.length > 0 && cap.length <= 120) suggested = cap
+    }
+    if (suggested) {
+      return {
+        agentBody: `Opening Save view with "${suggested}" filled in — change it if you want, then confirm.`,
+        effects: [{ type: "open_save_view_dialog", suggestedName: suggested }],
+      }
+    }
     return {
-      agentBody: `Saved view “${label}”. Available under My views in the left nav.`,
-      effects: [{ type: "add_saved_view_label", label }],
+      agentBody:
+        "Opening Save view — type a name for this layout, then confirm. It will store filters, grouping, columns, and sort.",
+      effects: [{ type: "open_save_view_dialog" }],
     }
   }
 

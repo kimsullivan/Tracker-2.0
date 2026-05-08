@@ -1,18 +1,34 @@
 "use client"
 
-import { useCallback, useLayoutEffect, useMemo, useState } from "react"
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { FilledSparkle } from "@/components/ui/filled-sparkle"
+import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import { TopBar } from "@/components/manage/top-bar"
 import { GrainBar, GrainNavToggle, type Grain } from "@/components/manage/grain-bar"
-import { CommandCenterWorkspace, Greeting, MyWorkAttentionStrip, PulseStrip, useMyWorkQueueState } from "@/components/manage/command-center"
-import { AllGrants } from "@/components/manage/all-grants"
+import { CommandCenterWorkspace, Greeting, MyWorkAttentionStrip, useMyWorkQueueState } from "@/components/manage/command-center"
+import { AllGrants, type AllGrantsFilterApi } from "@/components/manage/all-grants"
 import { PulseStripRechartsStatic } from "@/components/manage/all-grants-kpi-tiles"
 import { GrantPage } from "@/components/manage/grant-page"
-import { ChatPanelStandalone, getElizabethAssistantInitialMessages, getManageAssistantSuggestions } from "@/components/manage/chat-panel.standalone"
+import {
+  ChatPanelStandalone,
+  getElizabethAssistantInitialMessages,
+  type ChatPanelStandaloneHandle,
+} from "@/components/manage/chat-panel.standalone"
 import type { ChatTaskAction } from "@/components/manage/chat-inline-viz"
+import type { Grant } from "@/lib/manage/types"
 import { grants } from "@/lib/manage/data"
 import { ManagePrototypeSidebar } from "@/components/sidebar/manage-prototype-sidebar"
+import {
+  getMixAltSuggestions,
+  isEffectiveUpcoming,
+  matchDiscoveryGrants,
+  matchMixAltAgentTurn,
+  mixAltFallbackBody,
+  countTableLayoutEffects,
+  fiscalYearLabelsForGrants,
+  type MixAltEffect,
+} from "@/components/manage/mix-alt-agent"
 
 /**
  * Wide primary column only (~120rem cap): KPI + toggle + table/queue.
@@ -33,6 +49,17 @@ export function MixedPrototype() {
   const [grain, setGrain] = useState<Grain>("command")
   const [activeGrantId, setActiveGrantId] = useState<string | null>(null)
   const [operatorChatOpen, setOperatorChatOpen] = useState(false)
+  const [tableScopeGrants, setTableScopeGrants] = useState<Grant[]>(grants)
+  const [currentViewLabel, setCurrentViewLabel] = useState("All grants")
+
+  const filterApiRef = useRef<AllGrantsFilterApi | null>(null)
+  const chatPanelRef = useRef<ChatPanelStandaloneHandle>(null)
+  const [upcomingThresholdDays, setUpcomingThresholdDays] = useState(14)
+  const [snoozedIssueIds, setSnoozedIssueIds] = useState(() => new Set<string>())
+  const [discovery, setDiscovery] = useState({ deadlineNextMonth: false, tasksNone: false })
+  const [chatSavedViews, setChatSavedViews] = useState<string[]>([])
+  const [saveViewNudgeSeq, setSaveViewNudgeSeq] = useState(0)
+  const tableLayoutAccumRef = useRef(0)
 
   const grant = activeGrantId ? grants.find((g) => g.id === activeGrantId) : null
 
@@ -50,6 +77,142 @@ export function MixedPrototype() {
 
   const elizabethAssistantInitialMessages = useMemo(() => getElizabethAssistantInitialMessages(), [])
 
+  const chatSuggestions = useMemo(() => getMixAltSuggestions({ grain, operatorViewId: "all" }), [grain])
+
+  useLayoutEffect(() => {
+    if (grain !== "all-grants") tableLayoutAccumRef.current = 0
+  }, [grain])
+
+  const agentSnapshot = useCallback((): Parameters<typeof matchMixAltAgentTurn>[1] => {
+    return {
+      filteredBaseGrants: tableScopeGrants,
+      tableScopeGrants,
+      workQueueItems: workQueue.items,
+      upcomingThresholdDays,
+      snoozedIssueIds,
+      lastIssueContext: null,
+      activeGrantTitle: grant?.title ?? null,
+      currentViewLabel,
+      discoveryDeadlineNextMonth: discovery.deadlineNextMonth,
+      discoveryTasksNone: discovery.tasksNone,
+      chatSavedViewLabels: chatSavedViews,
+      fiscalYearLabels: fiscalYearLabelsForGrants(grants),
+    }
+  }, [
+    tableScopeGrants,
+    workQueue.items,
+    upcomingThresholdDays,
+    snoozedIssueIds,
+    grant,
+    currentViewLabel,
+    discovery.deadlineNextMonth,
+    discovery.tasksNone,
+    chatSavedViews,
+  ])
+
+  const applyMixAltEffects = useCallback(
+    (effects: MixAltEffect[]) => {
+      for (const e of effects) {
+        switch (e.type) {
+          case "set_owner_filter":
+            queueMicrotask(() => filterApiRef.current?.setFilters({ owner: e.ownerId }))
+            break
+          case "clear_owner_filter":
+            filterApiRef.current?.setFilters({ owner: null })
+            break
+          case "set_foundation_filter":
+            filterApiRef.current?.setFilters({ funderType: "Private" })
+            break
+          case "clear_foundation_filter":
+            filterApiRef.current?.setFilters({ funderType: null })
+            break
+          case "set_threshold":
+            setUpcomingThresholdDays(e.days)
+            break
+          case "snooze_upcoming": {
+            const ids = workQueue.items
+              .filter((i) => isEffectiveUpcoming(i, upcomingThresholdDays, snoozedIssueIds))
+              .map((i) => i.id)
+            const snapshotItems = workQueue.items.map((i) => ({ ...i }))
+            workQueue.setItems((prev) => prev.map((i) => (ids.includes(i.id) ? { ...i, snoozed: true } : i)))
+            setSnoozedIssueIds((prev) => new Set([...prev, ...ids]))
+            const n = ids.length
+            toast.success(`${n} issues snoozed`, {
+              action: {
+                label: "Undo",
+                onClick: () => {
+                  workQueue.setItems(snapshotItems)
+                  setSnoozedIssueIds((prev) => {
+                    const next = new Set(prev)
+                    for (const id of ids) next.delete(id)
+                    return next
+                  })
+                },
+              },
+            })
+            break
+          }
+          case "set_discovery":
+            setDiscovery({ deadlineNextMonth: e.deadlineNextMonth, tasksNone: e.tasksNone })
+            break
+          case "clear_discovery":
+            setDiscovery({ deadlineNextMonth: false, tasksNone: false })
+            break
+          case "add_saved_view_label":
+            setChatSavedViews((prev) => [...prev, e.label])
+            filterApiRef.current?.saveNamedView(e.label)
+            break
+          case "open_save_view_dialog":
+            queueMicrotask(() =>
+              filterApiRef.current?.openSaveViewDialog(
+                e.suggestedName ? { suggestedName: e.suggestedName } : undefined,
+              ),
+            )
+            break
+          case "set_group_by":
+            queueMicrotask(() => filterApiRef.current?.setGroupBy(e.groupBy))
+            break
+          case "clear_grant_toolbar_filters":
+            queueMicrotask(() => filterApiRef.current?.clearToolbarFilters())
+            break
+          case "set_funder_type_filter":
+            queueMicrotask(() => filterApiRef.current?.setFilters({ funderType: e.funderType }))
+            break
+          case "set_sort":
+            queueMicrotask(() => filterApiRef.current?.setSort(e.column, e.dir))
+            break
+          case "set_fiscal_year_filter":
+            queueMicrotask(() => filterApiRef.current?.setFilters({ fiscalYear: e.fiscalYear }))
+            break
+          case "set_column_visible":
+            queueMicrotask(() => filterApiRef.current?.setColumnVisible(e.column, e.visible))
+            break
+          case "move_column_before":
+            queueMicrotask(() => filterApiRef.current?.moveColumnBefore(e.moved, e.before))
+            break
+          case "move_column_after":
+            queueMicrotask(() => filterApiRef.current?.moveColumnAfter(e.moved, e.after))
+            break
+        }
+      }
+      const n = countTableLayoutEffects(effects)
+      if (n > 0 && grain === "all-grants") {
+        tableLayoutAccumRef.current += n
+        if (tableLayoutAccumRef.current >= 3) {
+          tableLayoutAccumRef.current = 0
+          setSaveViewNudgeSeq((s) => s + 1)
+        }
+      }
+    },
+    [workQueue, upcomingThresholdDays, snoozedIssueIds, grain],
+  )
+
+  const extraGrantFilter = useMemo(() => {
+    if (!discovery.deadlineNextMonth && !discovery.tasksNone) return null
+    return (g: Grant) =>
+      matchDiscoveryGrants([g], workQueue.items, discovery.deadlineNextMonth, discovery.tasksNone).length > 0
+  }, [discovery.deadlineNextMonth, discovery.tasksNone, workQueue.items])
+
   const handleMixAltChatAction = useCallback(
     (action: ChatTaskAction): boolean => {
       const href = action.href
@@ -58,6 +221,28 @@ export function MixedPrototype() {
       if (rest.startsWith("grant/")) {
         const grantId = decodeURIComponent(rest.slice("grant/".length))
         openGrant(grantId)
+        return true
+      }
+      if (rest === "open-save-view") {
+        filterApiRef.current?.openSaveViewDialog()
+        return true
+      }
+      if (rest.startsWith("open-save-view/suggested/")) {
+        const name = decodeURIComponent(rest.slice("open-save-view/suggested/".length))
+        filterApiRef.current?.openSaveViewDialog({ suggestedName: name })
+        return true
+      }
+      if (rest.startsWith("run-lens-export/")) {
+        const fmt = rest.slice("run-lens-export/".length)
+        if (fmt === "pdf" || fmt === "csv") {
+          filterApiRef.current?.exportLensReport(fmt, { silent: true })
+          return true
+        }
+      }
+      if (rest.startsWith("export-audience/")) {
+        return true
+      }
+      if (rest === "dismiss-save-nudge") {
         return true
       }
       return false
@@ -193,6 +378,18 @@ export function MixedPrototype() {
                           pageScrollMode
                           pageScrollParent={grantsScrollEl}
                           stickyFilterPrefix={<GrainNavToggle active={grain} onChange={setGrain} size="panel" />}
+                          onFilteredBaseChange={setTableScopeGrants}
+                          onViewLabelChange={setCurrentViewLabel}
+                          extraGrantFilter={extraGrantFilter}
+                          onRegisterFilterApi={(api) => {
+                            filterApiRef.current = api
+                          }}
+                          onOperatorSaveViewCommitted={(name) => {
+                            setChatSavedViews((prev) => (prev.includes(name) ? prev : [...prev, name]))
+                            chatPanelRef.current?.appendAgentMessage(
+                              `Saved "${name}" — it’s in your View menu with filters, grouping, columns, and sort.`,
+                            )
+                          }}
                         />
                       </div>
                     </div>
@@ -206,6 +403,7 @@ export function MixedPrototype() {
                   <div className="operator-chat-enter flex h-[min(42vh,26rem)] max-h-[480px] min-h-[220px] w-full shrink-0 flex-col overflow-visible rounded-xl border border-elevated-stroke bg-background/95 shadow-sm backdrop-blur-sm dark:bg-card dark:shadow-sm md:h-auto md:max-h-none md:min-h-0 md:flex-1">
                     <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl">
                       <ChatPanelStandalone
+                        ref={chatPanelRef}
                         variant="manage"
                         layout="embedded"
                         className="h-full min-h-0 overflow-hidden rounded-none border-0 bg-transparent shadow-none backdrop-blur-none dark:bg-transparent"
@@ -213,8 +411,16 @@ export function MixedPrototype() {
                         onClose={() => setOperatorChatOpen(false)}
                         title="Grants assistant"
                         initialMessages={elizabethAssistantInitialMessages}
-                        suggestions={getManageAssistantSuggestions()}
+                        suggestions={chatSuggestions}
+                        scriptedTurn={(text) => matchMixAltAgentTurn(text, agentSnapshot())}
+                        onScriptedEffects={applyMixAltEffects}
+                        scriptedFallbackOnly
+                        fallbackBody={mixAltFallbackBody()}
+                        mixAltChartFollowUps
+                        scriptedAgentPlainText
+                        mixAltTwilightQuickPrompts
                         onMixAltTaskAction={handleMixAltChatAction}
+                        saveViewNudgeSeq={saveViewNudgeSeq}
                       />
                     </div>
                   </div>

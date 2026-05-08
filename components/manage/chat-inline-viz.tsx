@@ -1,7 +1,7 @@
 "use client"
 
 import { useId } from "react"
-import { Activity, CircleDot, Scale, Zap, type LucideIcon } from "lucide-react"
+import { Activity, CircleDot, Download, FileSpreadsheet, FileText, Scale, Zap, type LucideIcon } from "lucide-react"
 import { Area, AreaChart, ResponsiveContainer, XAxis, YAxis } from "recharts"
 import { KPI_CHART_ANIMATION_DURATION_MS, KPI_CHART_ANIMATION_EASING, useKpiChartMotion } from "@/components/manage/all-grants-kpi-tiles"
 import { cn } from "@/lib/utils"
@@ -39,7 +39,35 @@ export type ChatVizTasks = {
   }[]
 }
 
-export type ChatViz = ChatVizSparkline | ChatVizMetrics | ChatVizTasks
+/** Plain chat actions — no card, no section title (e.g. save-view nudge). */
+export type ChatVizInlineActions = {
+  kind: "inline_actions"
+  actions: { label: string; href: string }[]
+}
+
+/** Generated report / export — PDF or CSV with download actions (`mixalt://run-lens-export/...`). */
+export type ChatVizReportAsset = {
+  kind: "report_asset"
+  format: "pdf" | "csv"
+  /** Primary line, e.g. audience + “grants report” */
+  title: string
+  subtitle?: string
+}
+
+/** Both PDF and CSV in one card — dual file illustrations + paired downloads. */
+export type ChatVizReportBundle = {
+  kind: "report_bundle"
+  title: string
+  subtitle?: string
+}
+
+export type ChatViz =
+  | ChatVizSparkline
+  | ChatVizMetrics
+  | ChatVizTasks
+  | ChatVizInlineActions
+  | ChatVizReportAsset
+  | ChatVizReportBundle
 
 export type ChatTaskAction = { label: string; href: string }
 
@@ -88,6 +116,56 @@ const TASK_ICON_GLYPH: Record<NonNullable<ChatVizTasks["items"][number]["tone"]>
   signal: "text-emerald-800 dark:text-emerald-200",
 }
 
+function ReportDocIllustration({
+  format,
+  uid,
+  compact,
+}: {
+  format: "pdf" | "csv"
+  uid: string
+  compact?: boolean
+}) {
+  const isPdf = format === "pdf"
+  const gFold = `ra-fold-${uid}`
+  const gPage = `ra-page-${uid}`
+  return (
+    <svg
+      viewBox="0 0 72 88"
+      className={cn(
+        "h-full w-full drop-shadow-sm",
+        compact ? "max-h-[4rem] max-w-[3.1rem]" : "max-h-[5.5rem] max-w-[4.25rem]",
+      )}
+      aria-hidden
+    >
+      <defs>
+        <linearGradient id={gFold} x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stopColor={isPdf ? "#fecaca" : "#bbf7d0"} stopOpacity="0.95" />
+          <stop offset="100%" stopColor={isPdf ? "#f97316" : "#22c55e"} stopOpacity="0.35" />
+        </linearGradient>
+        <linearGradient id={gPage} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="white" stopOpacity="0.95" />
+          <stop offset="100%" stopColor={isPdf ? "#fff7ed" : "#f0fdf4"} stopOpacity="1" />
+        </linearGradient>
+      </defs>
+      <rect x="6" y="4" width="56" height="78" rx="6" fill={`url(#${gPage})`} stroke="currentColor" strokeOpacity="0.12" className="text-foreground" />
+      <path d="M46 4 L58 16 L46 16 Z" fill={`url(#${gFold})`} stroke="currentColor" strokeOpacity="0.08" className="text-foreground" />
+      <rect x="14" y="28" width="40" height="4" rx="1.5" fill="currentColor" className="text-foreground" opacity="0.14" />
+      <rect x="14" y="38" width="32" height="3" rx="1" fill="currentColor" className="text-foreground" opacity="0.1" />
+      <rect x="14" y="46" width="36" height="3" rx="1" fill="currentColor" className="text-foreground" opacity="0.1" />
+      <rect x="14" y="54" width="28" height="3" rx="1" fill="currentColor" className="text-foreground" opacity="0.08" />
+      {isPdf ? (
+        <text x="36" y="74" textAnchor="middle" fontSize="11" fontWeight="700" fill="#dc2626" fontFamily="system-ui, sans-serif">
+          PDF
+        </text>
+      ) : (
+        <text x="36" y="74" textAnchor="middle" fontSize="10" fontWeight="700" fill="#15803d" fontFamily="system-ui, sans-serif">
+          CSV
+        </text>
+      )}
+    </svg>
+  )
+}
+
 export function ChatInlineViz({
   viz,
   staggerMs = 0,
@@ -99,7 +177,265 @@ export function ChatInlineViz({
   onTaskAction?: (action: ChatTaskAction) => void
 }) {
   const gradId = useId().replace(/:/g, "")
+  const reportIllustUid = useId().replace(/:/g, "")
   const { chartReady, reducedMotion } = useKpiChartMotion()
+
+  if (viz.kind === "report_asset") {
+    const isPdf = viz.format === "pdf"
+    const Icon = isPdf ? FileText : FileSpreadsheet
+    const accent =
+      isPdf
+        ? "from-rose-500/25 via-orange-400/15 to-amber-300/10 dark:from-rose-950/50 dark:via-orange-950/35"
+        : "from-emerald-500/25 via-green-400/15 to-teal-300/10 dark:from-emerald-950/50 dark:via-green-950/35"
+    const ring = isPdf ? "ring-rose-500/20 dark:ring-rose-400/25" : "ring-emerald-500/20 dark:ring-emerald-400/25"
+    return (
+      <div
+        className={cn(
+          "relative overflow-hidden rounded-2xl border border-border/50 bg-card p-0.5 shadow-md",
+          "animate-in fade-in zoom-in-95 slide-in-from-bottom-2 fill-mode-both duration-500",
+          "ring-1",
+          ring,
+        )}
+        style={{ animationDelay: `${staggerMs}ms` }}
+      >
+        <div className={cn("absolute inset-0 bg-gradient-to-br opacity-90", accent)} aria-hidden />
+        <div className="relative flex gap-4 rounded-[14px] bg-card/85 p-4 backdrop-blur-[2px] dark:bg-card/80">
+          <div
+            className={cn(
+              "flex shrink-0 items-center justify-center rounded-xl p-2",
+              isPdf
+                ? "bg-gradient-to-br from-rose-50 to-orange-50 dark:from-rose-950/40 dark:to-orange-950/30"
+                : "bg-gradient-to-br from-emerald-50 to-teal-50 dark:from-emerald-950/40 dark:to-teal-950/30",
+            )}
+          >
+            <div className="relative flex h-[5.5rem] w-[4.25rem] items-center justify-center">
+              <ReportDocIllustration format={viz.format} uid={reportIllustUid} />
+              <div
+                className={cn(
+                  "absolute -right-1 -bottom-1 flex h-7 w-7 items-center justify-center rounded-lg shadow-sm ring-1 ring-black/5 dark:ring-white/10",
+                  isPdf ? "bg-rose-600 text-white" : "bg-emerald-600 text-white",
+                )}
+              >
+                <Icon className="h-3.5 w-3.5" strokeWidth={2.2} aria-hidden />
+              </div>
+            </div>
+          </div>
+          <div className="min-w-0 flex-1 space-y-2">
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                {isPdf ? "PDF report" : "CSV export"}
+              </p>
+              <p className="mt-1 font-heading text-[15px] font-semibold leading-snug text-foreground">{viz.title}</p>
+              {viz.subtitle ? (
+                <p className="mt-0.5 text-[12px] leading-snug text-muted-foreground">{viz.subtitle}</p>
+              ) : null}
+            </div>
+            <div className="flex flex-wrap gap-2 pt-0.5">
+              {onTaskAction ? (
+                <>
+                  <Button
+                    type="button"
+                    size="sm"
+                    className={cn(
+                      "h-8 gap-1.5 rounded-lg px-3 text-[12px] font-semibold shadow-sm",
+                      isPdf ? "bg-rose-600 hover:bg-rose-700" : "bg-emerald-600 hover:bg-emerald-700",
+                    )}
+                    onClick={() =>
+                      onTaskAction({
+                        label: isPdf ? "Download PDF" : "Download CSV",
+                        href: isPdf ? "mixalt://run-lens-export/pdf" : "mixalt://run-lens-export/csv",
+                      })
+                    }
+                  >
+                    <Download className="h-3.5 w-3.5" aria-hidden />
+                    Download {isPdf ? "PDF" : "CSV"}
+                  </Button>
+                  {isPdf ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-8 rounded-lg border-border/70 bg-background/80 px-3 text-[11px] font-medium shadow-none"
+                      onClick={() =>
+                        onTaskAction({ label: "Download CSV", href: "mixalt://run-lens-export/csv" })
+                      }
+                    >
+                      <FileSpreadsheet className="mr-1 h-3 w-3" aria-hidden />
+                      CSV instead
+                    </Button>
+                  ) : (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-8 rounded-lg border-border/70 bg-background/80 px-3 text-[11px] font-medium shadow-none"
+                      onClick={() =>
+                        onTaskAction({ label: "Download PDF", href: "mixalt://run-lens-export/pdf" })
+                      }
+                    >
+                      <FileText className="mr-1 h-3 w-3" aria-hidden />
+                      PDF instead
+                    </Button>
+                  )}
+                </>
+              ) : (
+                <Button size="sm" className="h-8 rounded-lg text-[12px] font-semibold" asChild>
+                  <a
+                    href={isPdf ? "mixalt://run-lens-export/pdf" : "mixalt://run-lens-export/csv"}
+                    className="gap-1.5"
+                  >
+                    <Download className="h-3.5 w-3.5" aria-hidden />
+                    Download
+                  </a>
+                </Button>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  if (viz.kind === "report_bundle") {
+    const uidPdf = useId().replace(/:/g, "")
+    const uidCsv = useId().replace(/:/g, "")
+    return (
+      <div
+        className={cn(
+          "relative overflow-hidden rounded-2xl border border-border/50 bg-card p-0.5 shadow-lg",
+          "animate-in fade-in zoom-in-95 slide-in-from-bottom-2 fill-mode-both duration-500",
+          "ring-1 ring-violet-500/15 dark:ring-violet-400/20",
+        )}
+        style={{ animationDelay: `${staggerMs}ms` }}
+      >
+        <div
+          className="pointer-events-none absolute -left-16 top-0 h-40 w-40 rounded-full bg-rose-400/20 blur-3xl dark:bg-rose-600/15"
+          aria-hidden
+        />
+        <div
+          className="pointer-events-none absolute -right-12 bottom-0 h-36 w-36 rounded-full bg-emerald-400/20 blur-3xl dark:bg-emerald-500/15"
+          aria-hidden
+        />
+        <div className="relative rounded-[14px] border border-border/30 bg-card/90 p-4 backdrop-blur-[2px] dark:bg-card/85">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between sm:gap-5">
+            <div className="min-w-0 flex-1">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Report ready</p>
+              <p className="mt-1 font-heading text-[16px] font-bold leading-snug tracking-tight text-foreground">
+                {viz.title}
+              </p>
+              {viz.subtitle ? (
+                <p className="mt-1 text-[12px] leading-snug text-muted-foreground">{viz.subtitle}</p>
+              ) : null}
+            </div>
+            <div className="flex shrink-0 items-end justify-center gap-3 sm:justify-end">
+              <div className="flex flex-col items-center gap-1">
+                <div
+                  className={cn(
+                    "rounded-xl p-2 shadow-sm ring-1 ring-black/5 dark:ring-white/10",
+                    "bg-gradient-to-br from-rose-50 to-orange-50 dark:from-rose-950/45 dark:to-orange-950/35",
+                  )}
+                >
+                  <ReportDocIllustration format="pdf" uid={uidPdf} compact />
+                </div>
+                <span className="text-[10px] font-bold uppercase tracking-wide text-rose-700 dark:text-rose-300">
+                  PDF
+                </span>
+              </div>
+              <div className="flex flex-col items-center gap-1">
+                <div
+                  className={cn(
+                    "rounded-xl p-2 shadow-sm ring-1 ring-black/5 dark:ring-white/10",
+                    "bg-gradient-to-br from-emerald-50 to-teal-50 dark:from-emerald-950/45 dark:to-teal-950/35",
+                  )}
+                >
+                  <ReportDocIllustration format="csv" uid={uidCsv} compact />
+                </div>
+                <span className="text-[10px] font-bold uppercase tracking-wide text-emerald-800 dark:text-emerald-300">
+                  CSV
+                </span>
+              </div>
+            </div>
+          </div>
+          <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {onTaskAction ? (
+              <>
+                <Button
+                  type="button"
+                  size="sm"
+                  className="h-9 gap-1.5 rounded-xl bg-rose-600 text-[12px] font-semibold shadow-md hover:bg-rose-700"
+                  onClick={() =>
+                    onTaskAction({ label: "Download PDF", href: "mixalt://run-lens-export/pdf" })
+                  }
+                >
+                  <Download className="h-3.5 w-3.5" aria-hidden />
+                  Download PDF
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  className="h-9 gap-1.5 rounded-xl bg-emerald-600 text-[12px] font-semibold shadow-md hover:bg-emerald-700"
+                  onClick={() =>
+                    onTaskAction({ label: "Download CSV", href: "mixalt://run-lens-export/csv" })
+                  }
+                >
+                  <Download className="h-3.5 w-3.5" aria-hidden />
+                  Download CSV
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button size="sm" className="h-9 rounded-xl text-[12px] font-semibold" asChild>
+                  <a href="mixalt://run-lens-export/pdf" className="gap-1.5">
+                    <Download className="h-3.5 w-3.5" aria-hidden />
+                    Download PDF
+                  </a>
+                </Button>
+                <Button size="sm" className="h-9 rounded-xl text-[12px] font-semibold" asChild>
+                  <a href="mixalt://run-lens-export/csv" className="gap-1.5">
+                    <Download className="h-3.5 w-3.5" aria-hidden />
+                    Download CSV
+                  </a>
+                </Button>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  if (viz.kind === "inline_actions") {
+    return (
+      <div className="flex flex-wrap gap-1.5">
+        {viz.actions.map((a, idx) =>
+          onTaskAction ? (
+            <Button
+              key={`${a.label}-${idx}`}
+              type="button"
+              variant={idx === 0 ? "default" : "outline"}
+              size="sm"
+              className="h-7 min-h-7 rounded-md px-2.5 py-0 text-[11px] font-medium shadow-none"
+              onClick={() => onTaskAction(a)}
+            >
+              {a.label}
+            </Button>
+          ) : (
+            <Button
+              key={`${a.label}-${idx}`}
+              variant={idx === 0 ? "default" : "outline"}
+              size="sm"
+              className="h-7 min-h-7 rounded-md px-2.5 py-0 text-[11px] font-medium shadow-none"
+              asChild
+            >
+              <a href={a.href} target="_blank" rel="noreferrer">
+                {a.label}
+              </a>
+            </Button>
+          ),
+        )}
+      </div>
+    )
+  }
 
   if (viz.kind === "tasks") {
     return (

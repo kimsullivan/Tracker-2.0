@@ -1,8 +1,7 @@
 "use client"
 
-import { useCallback, useEffect, useRef, useState } from "react"
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react"
 import { ArrowUp, X } from "lucide-react"
-import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { FilledSparkle } from "@/components/ui/filled-sparkle"
@@ -23,6 +22,7 @@ import {
   mixAltOverspendSpendCharts,
   mixAltRacineGrantFollowUp,
   mixAltUnderspendSpendCharts,
+  mixAltSaveViewNudgeViz,
   type MixAltAgentTurn,
   type MixAltEffect,
 } from "@/components/manage/mix-alt-agent"
@@ -30,6 +30,11 @@ import {
 /** Matches main shell: TopBar (`h-11` = 2.75rem) + GrainBar (`h-9` = 2.25rem) + 12px breathing room */
 const PANEL_TOP = "calc(2.75rem + 2.25rem + 12px)"
 const PANEL_INSET = "16px"
+
+export type ChatPanelStandaloneHandle = {
+  /** Appends an assistant line (respects `scriptedAgentPlainText` for markdown vs plain). */
+  appendAgentMessage: (body: string) => void
+}
 
 export type StandaloneAgentMessage = {
   id: string
@@ -353,26 +358,7 @@ function StreamingAssistantPlain({
   )
 }
 
-export function ChatPanelStandalone({
-  contextLabel,
-  onClose,
-  variant = "manage",
-  layout = "floating",
-  initialMessages: initialMessagesProp,
-  suggestions: suggestionsProp,
-  title: titleProp,
-  showCloseButton = true,
-  streamMaxMs,
-  className,
-  scriptedTurn,
-  onScriptedEffects,
-  scriptedFallbackOnly,
-  fallbackBody,
-  onMixAltTaskAction,
-  mixAltChartFollowUps,
-  scriptedAgentPlainText,
-  mixAltTwilightQuickPrompts,
-}: {
+export type ChatPanelStandaloneProps = {
   contextLabel: string
   onClose?: () => void
   variant?: "manage" | "operator"
@@ -397,7 +383,35 @@ export function ChatPanelStandalone({
   scriptedAgentPlainText?: boolean
   /** Mix Alt: twilight quick prompts; hover darkens fill slightly. */
   mixAltTwilightQuickPrompts?: boolean
-}) {
+  /** When this increments, appends a “save view?” assistant nudge (mixed All grants agent). */
+  saveViewNudgeSeq?: number
+}
+
+export const ChatPanelStandalone = forwardRef<ChatPanelStandaloneHandle, ChatPanelStandaloneProps>(
+  function ChatPanelStandalone(
+    {
+      contextLabel,
+      onClose,
+      variant = "manage",
+      layout = "floating",
+      initialMessages: initialMessagesProp,
+      suggestions: suggestionsProp,
+      title: titleProp,
+      showCloseButton = true,
+      streamMaxMs,
+      className,
+      scriptedTurn,
+      onScriptedEffects,
+      scriptedFallbackOnly,
+      fallbackBody,
+      onMixAltTaskAction,
+      mixAltChartFollowUps,
+      scriptedAgentPlainText,
+      mixAltTwilightQuickPrompts,
+      saveViewNudgeSeq,
+    },
+    ref,
+  ) {
   const [input, setInput] = useState("")
   const [thinkingPhase, setThinkingPhase] = useState<ThinkingPhase>("idle")
   const [messages, setMessages] = useState<AgentMessage[]>(
@@ -408,6 +422,44 @@ export function ChatPanelStandalone({
   const isEmbedded = layout === "embedded"
   const thinkingTimeoutsRef = useRef<number[]>([])
   const bottomRef = useRef<HTMLDivElement>(null)
+  const lastSaveNudgeSeqRef = useRef(0)
+  const scriptedPlainRef = useRef(!!scriptedAgentPlainText)
+  scriptedPlainRef.current = !!scriptedAgentPlainText
+
+  useImperativeHandle(ref, () => ({
+    appendAgentMessage: (body: string) => {
+      const markdown = !scriptedPlainRef.current
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `a-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          role: "agent",
+          markdown,
+          at: Date.now(),
+          body,
+        },
+      ])
+    },
+  }))
+
+  useEffect(() => {
+    if (!saveViewNudgeSeq || saveViewNudgeSeq === lastSaveNudgeSeqRef.current) return
+    lastSaveNudgeSeqRef.current = saveViewNudgeSeq
+    const agentMd = !(scriptedAgentPlainText ?? false)
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: `save-nudge-${saveViewNudgeSeq}-${Date.now()}`,
+        role: "agent",
+        markdown: agentMd,
+        at: Date.now(),
+        body: agentMd
+          ? "You've adjusted the grants table a few times. Want to **save this layout** as a named view? That keeps filters, grouping, visible columns, and sort in the View menu."
+          : "You've adjusted the grants table a few times. Want to save this layout as a named view? That keeps filters, grouping, visible columns, and sort in the View menu.",
+        viz: mixAltSaveViewNudgeViz(),
+      },
+    ])
+  }, [saveViewNudgeSeq, scriptedAgentPlainText])
 
   const clearThinkingTimeouts = useCallback(() => {
     thinkingTimeoutsRef.current.forEach(clearTimeout)
@@ -425,8 +477,70 @@ export function ChatPanelStandalone({
   }, [])
 
   const handleTaskAction = useCallback(
-    (action: ChatTaskAction) => {
+    (action: ChatTaskAction, sourceMessageId: string) => {
       const href = action.href
+      const agentMd = !scriptedPlainRef.current
+      const removeSourceAndAppend = (body: string, markdown: boolean = agentMd, viz?: ChatViz[]) => {
+        setMessages((prev) => [
+          ...prev.filter((m) => m.id !== sourceMessageId),
+          {
+            id: `a-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            role: "agent",
+            markdown,
+            at: Date.now(),
+            body,
+            ...(viz && viz.length > 0 ? { viz } : {}),
+          },
+        ])
+      }
+
+      if (href.startsWith("mixalt://run-lens-export/")) {
+        onMixAltTaskAction?.({ label: action.label, href })
+        return
+      }
+
+      if (href === "mixalt://dismiss-save-nudge") {
+        removeSourceAndAppend(
+          agentMd
+            ? "Sounds good — I won’t nudge about saving for now. Say **save this view** anytime you want to keep the layout."
+            : "Sounds good — I won't nudge about saving for now. Say \"save this view\" anytime you want to keep the layout.",
+        )
+        onMixAltTaskAction?.(action)
+        return
+      }
+      if (href === "mixalt://open-save-view" || href.startsWith("mixalt://open-save-view/suggested/")) {
+        removeSourceAndAppend(
+          agentMd
+            ? "Opening **Save view** — name it when you’re ready. I’ll confirm here as soon as it’s saved."
+            : "Opening Save view — name it when you're ready. I'll confirm here as soon as it's saved.",
+        )
+        onMixAltTaskAction?.(action)
+        return
+      }
+      if (href.startsWith("mixalt://export-audience/")) {
+        onMixAltTaskAction?.(action)
+        const aud = decodeURIComponent(href.slice("mixalt://export-audience/".length))
+        const dated = new Date().toLocaleDateString(undefined, {
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+        })
+        removeSourceAndAppend(
+          agentMd
+            ? `**${aud}** report is ready — download **PDF** or **CSV** below.`
+            : `${aud} report is ready — download PDF or CSV below.`,
+          agentMd,
+          [
+            {
+              kind: "report_bundle",
+              title: `${aud} · Grants export`,
+              subtitle: `From ${contextLabel} · ${dated}`,
+            },
+          ],
+        )
+        return
+      }
+
       if (mixAltChartFollowUps) {
         if (href === "mixalt://chart/spend-underspend") {
           setMessages((prev) => [
@@ -460,10 +574,9 @@ export function ChatPanelStandalone({
         }
       }
       if (onMixAltTaskAction?.(action)) return
-      const { toastTitle, toastDescription, followUpBody } = taskFollowThrough(action)
-      toast.success(toastTitle, { description: toastDescription })
+      const { followUpBody } = taskFollowThrough(action)
       setMessages((prev) => [
-        ...prev,
+        ...prev.filter((m) => m.id !== sourceMessageId),
         {
           id: `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
           role: "agent",
@@ -473,7 +586,7 @@ export function ChatPanelStandalone({
         },
       ])
     },
-    [mixAltChartFollowUps, onMixAltTaskAction],
+    [mixAltChartFollowUps, onMixAltTaskAction, contextLabel],
   )
 
   useEffect(() => {
@@ -701,7 +814,7 @@ export function ChatPanelStandalone({
       </div>
     </aside>
   )
-}
+})
 
 function AgentMessageTurn({
   m,
@@ -716,10 +829,13 @@ function AgentMessageTurn({
   scrollToBottom: () => void
   maxStreamMs?: number
   panelVariant?: "manage" | "operator"
-  onTaskAction?: (action: ChatTaskAction) => void
+  onTaskAction?: (action: ChatTaskAction, sourceMessageId: string) => void
 }) {
   const plainClass = "max-w-none whitespace-pre-wrap text-[14px] leading-relaxed text-foreground/95"
   const [streamDone, setStreamDone] = useState(false)
+  const boundTaskAction = onTaskAction
+    ? (action: ChatTaskAction) => onTaskAction(action, m.id)
+    : undefined
 
   return (
     <article className="min-w-0">
@@ -746,28 +862,81 @@ function AgentMessageTurn({
           }}
         />
       )}
-      {streamDone ? (
-        <>
-          {m.viz?.length ? (
-            (() => {
-              const kpiBlocks = m.viz.filter((b) => b.kind !== "tasks")
-              const taskBlocks = m.viz.filter((b) => b.kind === "tasks")
-              if (panelVariant === "operator") {
-                if (!taskBlocks.length) return null
-                return (
+      {m.viz?.length ? (
+        (() => {
+          const inlineActionBlocks = m.viz.filter((b) => b.kind === "inline_actions")
+          const kpiBlocks = m.viz.filter((b) => b.kind === "metrics" || b.kind === "sparkline")
+          const taskBlocks = m.viz.filter((b) => b.kind === "tasks")
+          const reportBlocks = m.viz.filter((b) => b.kind === "report_asset" || b.kind === "report_bundle")
+          if (panelVariant === "operator") {
+            if (!taskBlocks.length && !inlineActionBlocks.length && !reportBlocks.length) return null
+            return (
+              <>
+                {inlineActionBlocks.length ? (
+                  <div className="mt-3">
+                    {inlineActionBlocks.map((block, i) => (
+                      <ChatInlineViz
+                        key={`${m.id}-viz-inline-${i}`}
+                        viz={block}
+                        onTaskAction={boundTaskAction}
+                      />
+                    ))}
+                  </div>
+                ) : null}
+                {reportBlocks.length ? (
+                  <div className="mt-3 space-y-3">
+                    {reportBlocks.map((block, i) => (
+                      <ChatInlineViz
+                        key={`${m.id}-viz-report-${i}`}
+                        viz={block}
+                        staggerMs={i * 80}
+                        onTaskAction={boundTaskAction}
+                      />
+                    ))}
+                  </div>
+                ) : null}
+                {taskBlocks.length ? (
                   <div className="mt-4 space-y-3 border-t border-border/40 pt-3">
                     {taskBlocks.map((block, i) => (
                       <ChatInlineViz
                         key={`${m.id}-viz-task-${i}`}
                         viz={block}
                         staggerMs={i * 100}
-                        onTaskAction={onTaskAction}
+                        onTaskAction={boundTaskAction}
                       />
                     ))}
                   </div>
-                )
-              }
-              return (
+                ) : null}
+              </>
+            )
+          }
+          const hasKpiOrTasks = kpiBlocks.length > 0 || taskBlocks.length > 0
+          return (
+            <>
+              {inlineActionBlocks.length ? (
+                <div className="mt-3">
+                  {inlineActionBlocks.map((block, i) => (
+                    <ChatInlineViz
+                      key={`${m.id}-viz-inline-${i}`}
+                      viz={block}
+                      onTaskAction={boundTaskAction}
+                    />
+                  ))}
+                </div>
+              ) : null}
+              {reportBlocks.length ? (
+                <div className="mt-3 space-y-3">
+                  {reportBlocks.map((block, i) => (
+                    <ChatInlineViz
+                      key={`${m.id}-viz-report-${i}`}
+                      viz={block}
+                      staggerMs={i * 80}
+                      onTaskAction={boundTaskAction}
+                    />
+                  ))}
+                </div>
+              ) : null}
+              {hasKpiOrTasks ? (
                 <div className="mt-4 space-y-3 border-t border-border/40 pt-3">
                   {kpiBlocks.length ? (
                     <div className="space-y-3">
@@ -781,13 +950,17 @@ function AgentMessageTurn({
                       key={`${m.id}-viz-task-${i}`}
                       viz={block}
                       staggerMs={(kpiBlocks.length + i) * 100}
-                      onTaskAction={onTaskAction}
+                      onTaskAction={boundTaskAction}
                     />
                   ))}
                 </div>
-              )
-            })()
-          ) : null}
+              ) : null}
+            </>
+          )
+        })()
+      ) : null}
+      {streamDone ? (
+        <>
           {m.sources?.length ? <ChatSources sources={m.sources} /> : null}
           <time
             className="mt-2 block text-[11px] text-muted-foreground/80 tabular-nums"

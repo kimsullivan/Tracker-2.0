@@ -27,7 +27,7 @@ export default function RootLayout({
     <html lang="en" className={`${lato.variable} bg-white`}>
       <body className="font-sans antialiased bg-white">
         <TooltipProvider delayDuration={200}>{children}</TooltipProvider>
-        <Toaster position="bottom-right" />
+        <Toaster position="top-center" />
         {process.env.NODE_ENV === "production" && <Analytics />}
       </body>
     </html>

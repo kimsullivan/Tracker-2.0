@@ -169,6 +169,23 @@ function reorderColumns(order: ColKey[], from: ColKey, to: ColKey): ColKey[] {
   return next
 }
 
+/** Non-grant column order only. `after: null` inserts at the start (after Grant). */
+function placeColumnAfter(order: ColKey[], moved: ColKey, after: ColKey | null): ColKey[] {
+  if (moved === "grant") return order
+  const tail = order.filter((k) => k !== moved)
+  if (after === null) return [moved, ...tail]
+  const idx = tail.indexOf(after)
+  if (idx === -1) return [...tail, moved]
+  return [...tail.slice(0, idx + 1), moved, ...tail.slice(idx + 1)]
+}
+
+function placeColumnBeforeKey(order: ColKey[], moved: ColKey, before: ColKey): ColKey[] {
+  if (moved === "grant") return order
+  const idx = order.indexOf(before)
+  if (idx <= 0) return placeColumnAfter(order, moved, null)
+  return placeColumnAfter(order, moved, order[idx - 1]!)
+}
+
 export type GroupBy = "stage" | "owner" | "funderType" | "funder" | "projectGroup" | "deadline" | "none"
 
 const GROUP_BY_EXPORT_LABEL: Record<GroupBy, string | null> = {
@@ -401,10 +418,21 @@ function isOperatorColumnLayoutDirty(
 
 export type AllGrantsFilterApi = {
   setFilters: (patch: Partial<Record<string, string | null>>) => void
-  saveNamedView: (name: string) => void
+  /** `silent`: skip toast (e.g. assistant already confirms in chat). */
+  saveNamedView: (name: string, opts?: { silent?: boolean }) => void
   setGroupBy: (groupBy: GroupBy) => void
   setSort: (sortKey: ColKey | null, sortDir?: SortDir) => void
   clearToolbarFilters: () => void
+  /** Show or hide a column (locked columns ignore hide). */
+  setColumnVisible: (key: ColKey, visible: boolean) => void
+  /** Move a column to immediately before another (non-grant keys only). */
+  moveColumnBefore: (moved: ColKey, before: ColKey) => void
+  /** Move a column to immediately after another; `after: null` = first after Grant. */
+  moveColumnAfter: (moved: ColKey, after: ColKey | null) => void
+  /** Opens the Save view dialog (operator layout). Prefill the name when provided. */
+  openSaveViewDialog: (opts?: { suggestedName?: string }) => void
+  /** Operator: same export as View menu PDF/CSV; `silent` skips success toasts (e.g. chat card is enough). */
+  exportLensReport: (format: "pdf" | "csv", opts?: { silent?: boolean }) => void
 }
 
 export function AllGrants({
@@ -433,6 +461,7 @@ export function AllGrants({
   onOperatorViewIdChange,
   /** When incremented (e.g. switching back to All grants tab), snap to built-in `all` (“Where are we?”). */
   operatorHomeViewResetKey,
+  onOperatorSaveViewCommitted,
 }: {
   onOpenGrant: (id: string) => void
   variant?: "default" | "operator"
@@ -463,6 +492,8 @@ export function AllGrants({
   onOperatorBuiltinSliceChange?: (sliceId: string) => void
   onOperatorViewIdChange?: (viewId: string) => void
   operatorHomeViewResetKey?: number
+  /** Operator: after Save view dialog commits — in-chat ack instead of toast when set (mixed shells). */
+  onOperatorSaveViewCommitted?: (name: string) => void
 }) {
   const [selectedViewId, setSelectedViewId] = useState("all")
   const [customViews, setCustomViews] = useState<OperatorSavedView[]>([])
@@ -1041,8 +1072,41 @@ export function AllGrants({
     setColOrder((order) => reorderColumns(order, from, to))
   }
 
+  const setColumnVisibleApi = useCallback(
+    (key: ColKey, visible: boolean) => {
+      forkIfCannedOperatorEdit()
+      const def = COLUMNS.find((c) => c.key === key)
+      setVisibleCols((prev) => {
+        const next = new Set(prev)
+        if (visible) next.add(key)
+        else {
+          if (def?.locked) return prev
+          next.delete(key)
+        }
+        return next
+      })
+    },
+    [forkIfCannedOperatorEdit],
+  )
+
+  const moveColumnBeforeApi = useCallback(
+    (moved: ColKey, before: ColKey) => {
+      forkIfCannedOperatorEdit()
+      setColOrder((order) => placeColumnBeforeKey(order, moved, before))
+    },
+    [forkIfCannedOperatorEdit],
+  )
+
+  const moveColumnAfterApi = useCallback(
+    (moved: ColKey, after: ColKey | null) => {
+      forkIfCannedOperatorEdit()
+      setColOrder((order) => placeColumnAfter(order, moved, after))
+    },
+    [forkIfCannedOperatorEdit],
+  )
+
   const commitSavedView = useCallback(
-    (name: string) => {
+    (name: string, opts?: { silent?: boolean }) => {
       const trimmed = name.trim()
       if (!trimmed) return
       const baseSlice = selectedViewId.startsWith("custom-")
@@ -1062,97 +1126,19 @@ export function AllGrants({
       setFilterBaseline({ ...config.filters })
       setFpKpiBaseline({ ...fpKpi })
       setColumnLayoutBaseline(snapshotOperatorColumnLayout(visibleCols, colOrder))
-      toast("View saved", { description: `“${trimmed}” is in the View menu.` })
+      if (!opts?.silent) {
+        toast("View saved", { description: `“${trimmed}” is in the View menu.` })
+      }
     },
     [selectedViewId, customViews, groupBy, visibleCols, colOrder, filters, fpKpi],
   )
-
-  useEffect(() => {
-    if (!onRegisterFilterApi) return
-    const api: AllGrantsFilterApi = {
-      setFilters: (patch) => {
-        forkIfCannedOperatorEdit()
-        setFilters((prev) => {
-          const next: Record<string, string | null> = { ...prev }
-          for (const [k, v] of Object.entries(patch)) {
-            if (v !== undefined) next[k] = v
-          }
-          return next
-        })
-      },
-      saveNamedView: (name) => commitSavedView(name),
-      setGroupBy: (gb) => {
-        forkIfCannedOperatorEdit()
-        setGroupBy(gb)
-      },
-      setSort: (key, dir) => {
-        forkIfCannedOperatorEdit()
-        setSortKey(key)
-        if (dir) setSortDir(dir)
-      },
-      clearToolbarFilters: () => {
-        forkIfCannedOperatorEdit()
-        setFilters((prev) => ({
-          ...prev,
-          fiscalYear: null,
-          funderType: null,
-          owner: null,
-          periodYtd: null,
-        }))
-      },
-    }
-    onRegisterFilterApi(api)
-    return () => onRegisterFilterApi(null)
-  }, [onRegisterFilterApi, commitSavedView, forkIfCannedOperatorEdit])
-
-  function handleSaveCustomView() {
-    commitSavedView(saveViewName)
-    setSaveViewOpen(false)
-    setSaveViewName("")
-  }
-
-  /** Funder portfolio KPI strip only for the built-in Instrumentl lens — not sample or user-saved views. */
-  const funderPortfolioKpiInner =
-    variant === "operator" && funderPortfolioLens && selectedViewId === "funder-portfolio" ? (
-      <PulseStripFunderPortfolio
-        grantsScoped={filteredBase}
-        grantsFull={grantsData}
-        anchorYear={fpAnchorYear}
-        kpi={fpKpi}
-        onKpiChange={(next) => {
-          forkIfCannedOperatorEdit()
-          setFpKpi(next)
-        }}
-        selectedFunderType={(filters.funderType as FunderType | null) ?? null}
-        onFunderTypeChange={(ft) => {
-          forkIfCannedOperatorEdit()
-          setFilters((prev) => ({ ...prev, funderType: ft }))
-        }}
-      />
-    ) : null
-
-  /** Page scroll (Mixed-alt): same slot as Board / Bridge KPI strips — scrolls with the column. */
-  const funderPortfolioKpiPageBetween =
-    funderPortfolioKpiInner && pageScrollMode ? (
-      <div className="w-full shrink-0 self-stretch px-2 pb-3 pt-2 sm:px-4 sm:pb-4 sm:pt-3">
-        <div className="min-w-0 space-y-2">{funderPortfolioKpiInner}</div>
-      </div>
-    ) : null
-
-  /** Non-page-scroll operator layout: KPI sits above the table scrollport. */
-  const funderPortfolioKpiBelowToolbar =
-    funderPortfolioKpiInner && !pageScrollMode ? (
-      <div className="min-w-0 shrink-0 space-y-2 px-2 pb-3 pt-2 sm:px-4">
-        {funderPortfolioKpiInner}
-      </div>
-    ) : null
 
   /** Operator: export (PDF/CSV) on pipeline “Where are we?” (`all`) plus Board & Funder built-ins. */
   const showOperatorExport =
     variant === "operator" && (boardAudience || funderPortfolioLens || selectedViewId === "all")
 
   const queueLensExport = useCallback(
-    (format: "pdf" | "csv") => {
+    (format: "pdf" | "csv", opts?: { silent?: boolean }) => {
       let base: string
       if (boardAudience) {
         base = `Board / Leadership · ${filters.periodYtd ?? "All periods"}`
@@ -1202,7 +1188,7 @@ export function AllGrants({
             groups: exportGroups,
             metrics: pdfMetrics,
           })
-          toast.success("PDF report downloaded", { description: `${base}` })
+          if (!opts?.silent) toast.success("PDF report downloaded", { description: `${base}` })
         } else {
           downloadGrantsCsvReport({
             grants: sortedFiltered,
@@ -1211,7 +1197,7 @@ export function AllGrants({
             groups: exportGroups,
             includeGroupColumn: groupBy !== "none",
           })
-          toast.success("CSV downloaded", { description: `${base}` })
+          if (!opts?.silent) toast.success("CSV downloaded", { description: `${base}` })
         }
       } catch (err) {
         console.error(err)
@@ -1231,6 +1217,106 @@ export function AllGrants({
       groupBy,
     ],
   )
+
+  useEffect(() => {
+    if (!onRegisterFilterApi) return
+    const api: AllGrantsFilterApi = {
+      setFilters: (patch) => {
+        forkIfCannedOperatorEdit()
+        setFilters((prev) => {
+          const next: Record<string, string | null> = { ...prev }
+          for (const [k, v] of Object.entries(patch)) {
+            if (v !== undefined) next[k] = v
+          }
+          return next
+        })
+      },
+      saveNamedView: (name, opts) => commitSavedView(name, opts),
+      setGroupBy: (gb) => {
+        forkIfCannedOperatorEdit()
+        setGroupBy(gb)
+      },
+      setSort: (key, dir) => {
+        forkIfCannedOperatorEdit()
+        setSortKey(key)
+        if (dir) setSortDir(dir)
+      },
+      clearToolbarFilters: () => {
+        forkIfCannedOperatorEdit()
+        setFilters((prev) => ({
+          ...prev,
+          fiscalYear: null,
+          funderType: null,
+          owner: null,
+          periodYtd: null,
+        }))
+      },
+      setColumnVisible: setColumnVisibleApi,
+      moveColumnBefore: moveColumnBeforeApi,
+      moveColumnAfter: moveColumnAfterApi,
+      openSaveViewDialog: (opts) => {
+        setSaveViewName(opts?.suggestedName ?? "")
+        setSaveViewOpen(true)
+      },
+      exportLensReport: (format, opts) => queueLensExport(format, opts),
+    }
+    onRegisterFilterApi(api)
+    return () => onRegisterFilterApi(null)
+  }, [
+    onRegisterFilterApi,
+    commitSavedView,
+    forkIfCannedOperatorEdit,
+    setColumnVisibleApi,
+    moveColumnBeforeApi,
+    moveColumnAfterApi,
+    queueLensExport,
+  ])
+
+  function handleSaveCustomView() {
+    const trimmed = saveViewName.trim()
+    if (!trimmed) return
+    const chatAck = variant === "operator" && onOperatorSaveViewCommitted
+    commitSavedView(trimmed, { silent: !!chatAck })
+    if (chatAck) onOperatorSaveViewCommitted(trimmed)
+    setSaveViewOpen(false)
+    setSaveViewName("")
+  }
+
+  /** Funder portfolio KPI strip only for the built-in Instrumentl lens — not sample or user-saved views. */
+  const funderPortfolioKpiInner =
+    variant === "operator" && funderPortfolioLens && selectedViewId === "funder-portfolio" ? (
+      <PulseStripFunderPortfolio
+        grantsScoped={filteredBase}
+        grantsFull={grantsData}
+        anchorYear={fpAnchorYear}
+        kpi={fpKpi}
+        onKpiChange={(next) => {
+          forkIfCannedOperatorEdit()
+          setFpKpi(next)
+        }}
+        selectedFunderType={(filters.funderType as FunderType | null) ?? null}
+        onFunderTypeChange={(ft) => {
+          forkIfCannedOperatorEdit()
+          setFilters((prev) => ({ ...prev, funderType: ft }))
+        }}
+      />
+    ) : null
+
+  /** Page scroll (Mixed-alt): same slot as Board / Bridge KPI strips — scrolls with the column. */
+  const funderPortfolioKpiPageBetween =
+    funderPortfolioKpiInner && pageScrollMode ? (
+      <div className="w-full shrink-0 self-stretch px-2 pb-3 pt-2 sm:px-4 sm:pb-4 sm:pt-3">
+        <div className="min-w-0 space-y-2">{funderPortfolioKpiInner}</div>
+      </div>
+    ) : null
+
+  /** Non-page-scroll operator layout: KPI sits above the table scrollport. */
+  const funderPortfolioKpiBelowToolbar =
+    funderPortfolioKpiInner && !pageScrollMode ? (
+      <div className="min-w-0 shrink-0 space-y-2 px-2 pb-3 pt-2 sm:px-4">
+        {funderPortfolioKpiInner}
+      </div>
+    ) : null
 
   /** Inner row scrolls horizontally when needed; avoid `min-w-full` on pinned parents (uses viewport %). */
   const filterToolbarRow = (
