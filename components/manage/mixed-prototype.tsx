@@ -9,7 +9,7 @@ import { GrainBar, GrainNavToggle, type Grain } from "@/components/manage/grain-
 import { CommandCenterWorkspace, Greeting, MyWorkAttentionStrip, useMyWorkQueueState } from "@/components/manage/command-center"
 import { AllGrants, type AllGrantsFilterApi } from "@/components/manage/all-grants"
 import { PulseStripRechartsStatic } from "@/components/manage/all-grants-kpi-tiles"
-import { GrantPage } from "@/components/manage/grant-page"
+import { GrantDetailsPage } from "@/components/manage/grant-details-page"
 import {
   ChatPanelStandalone,
   getElizabethAssistantInitialMessages,
@@ -18,6 +18,7 @@ import {
 import type { ChatTaskAction } from "@/components/manage/chat-inline-viz"
 import type { Grant } from "@/lib/manage/types"
 import { grants } from "@/lib/manage/data"
+import { grantDisplayTitle } from "@/lib/manage/grant-context"
 import { ManagePrototypeSidebar } from "@/components/sidebar/manage-prototype-sidebar"
 import {
   getMixAltSuggestions,
@@ -71,7 +72,7 @@ export function MixedPrototype() {
     setActiveGrantId(null)
   }
 
-  const contextLabel = grant ? grant.title : grain === "command" ? "My work" : "All grants table"
+  const contextLabel = grant ? grantDisplayTitle(grant) : grain === "command" ? "My work" : "All grants table"
 
   const workQueue = useMyWorkQueueState()
 
@@ -302,7 +303,7 @@ export function MixedPrototype() {
         {grant ? (
           <GrainBar
             breadcrumb={{
-              label: grant.title,
+              label: grantDisplayTitle(grant),
               onBack: closeGrant,
             }}
           />
@@ -316,7 +317,7 @@ export function MixedPrototype() {
         >
           {grant ? (
             <div className="shadow-bleed-scroll min-h-0 min-w-0 flex-1 overflow-auto">
-              <GrantPage grantId={grant.id} />
+              <GrantDetailsPage grantId={grant.id} />
             </div>
           ) : (
             <>

@@ -46,6 +46,34 @@ export const grants: Grant[] = [
     projectGroup: "Health Equity",
     priority: "P0",
     renewalLikelihood: "High",
+    serviceArea:
+      "Springfield, Hartford, and New Britain — six FQHC sites plus two mobile outreach units (MA / CT border communities)",
+    geography: "Springfield, MA (prime applicant) · clinical sites in MA & CT",
+    programSummary:
+      "Year 2 of HRSA’s Diabetes Prevention Program scales lifestyle coaching for adults at elevated risk for type 2 diabetes. The cohort prioritizes Medicaid-heavy panels, language access (English / Spanish / Portuguese), and warm handoffs from ED and community health worker programs. This workspace tracks drawdowns against the federal cost objective, match from hospital partners, and mid-year reporting that now includes new equity metrics from the March template. Finance, programs, and grants stay aligned on Hartford vs. Springfield personnel splits and indirect so reimbursement packets clear without rework.",
+    opportunityLocation:
+      "Springfield Clinical Consortium — legal applicant in Springfield, MA; finance and grants office of record at the consortium HQ.",
+    projectLocation:
+      "Six FQHC delivery sites in Springfield, Hartford, and New Britain plus two mobile units; see NOFO site table and HRSA-approved scope of work.",
+    residencyLocation:
+      "No residency requirement for participants; program staff must meet HRSA credentialing at assigned sites (MA / CT).",
+    irs990Snapshot:
+      "Federal pass-through — funder 990-PF not applicable. Track prime A-133 / Uniform Guidance single audit threshold and subrecipient risk tiers on file with OIG exclusions check (demo).",
+    ineligibility:
+      "Individuals (except as enrolled participants), for-profit clinical entities as prime without waiver, duplicate HRSA DPP awards for overlapping cohorts, costs outside approved budget period, and lobbying with federal funds.",
+    opportunityCompliance:
+      "Single Audit / Uniform Guidance applies above threshold. Subrecipient agreements must flow down EDGAR clauses. Advocacy and legislative activity cannot be charged to this award (demo).",
+    opportunityEligibleApplicants: [
+      "501(c)(3) nonprofit prime applicants",
+      "State, territorial, or local governmental entities (as pass-through)",
+      "Federally recognized Tribal organizations (with statutory eligibility)",
+    ],
+    ineligibilityBullets: [
+      "Individuals or sole proprietorships as prime",
+      "For-profit clinical entities as prime without waiver",
+      "Duplicate HRSA awards for overlapping cohort populations",
+      "Costs outside the approved budget period or scope",
+    ],
   },
   {
     id: "G-2025-042",
@@ -66,6 +94,54 @@ export const grants: Grant[] = [
     projectGroup: "Workforce",
     priority: "P1",
     renewalLikelihood: "Medium",
+    serviceArea: "Boston, Lawrence, and Brockton — CHW placements with health centers and housing agencies",
+    geography: "Boston, MA (applicant) · satellite coordination in Lawrence",
+    programSummary:
+      "Robert Wood Johnson’s Pioneering Ideas track supports community health workers bridging clinical care and social needs. The proposal ties CHW tenure to wage progression, supervision ladders, and Medicaid billing readiness. Leadership wants the LOI to foreground equity outcomes (housing stability, ED return visits) without over-committing on evaluation design before the July technical workshop.",
+    opportunityLocation:
+      "Community Care Collaborative — nonprofit applicant; legal domicile and board in Boston, MA.",
+    projectLocation:
+      "CHW placements with partner FQHCs and housing agencies in Boston, Lawrence, and Brockton; employer sites named in attachment B.",
+    residencyLocation:
+      "CHWs must live or work within 45 miles of assigned hub (Boston or Lawrence) for on-call coverage; not a clinical residency program.",
+    irs990Snapshot:
+      "Latest RWJF 990-PF (demo): total assets ~$12.4B · total grants paid ~$500M · median workforce grant ~$350k · no material related-party transactions flagged for this program line.",
+    irs990Metrics: [
+      { label: "Total assets", value: "~$12.4B" },
+      { label: "Grants paid (FY)", value: "~$500M" },
+      { label: "Median grant", value: "~$350K" },
+      { label: "Payout (approx.)", value: "5.1%" },
+    ],
+    ineligibility:
+      "Direct grants to individuals, for-profit employers as lead applicant, capital campaigns, endowment, debt retirement, and activities outside US public health scope.",
+    opportunityCompliance:
+      "501(c)(3) public charity status required. Lobbying limited; 501(h) election on file. No RWJF funds for ballot measure work. Indirect capped per RWJF budget template (demo).",
+    opportunityPriorityAreas: [
+      "Community health worker tenure and supervision",
+      "Medicaid readiness and billing integrity",
+      "Housing stability and ED utilization outcomes",
+      "Language access and culturally competent care",
+      "Employer and FQHC partnership depth",
+    ],
+    opportunityFundingUses: ["Program staffing", "Training & certification", "Data systems", "Partner subawards"],
+    opportunityEligibleApplicants: [
+      "501(c)(3) public charities",
+      "Local or regional government partners (as subrecipient)",
+      "Tribal health organizations (with documented partnership)",
+    ],
+    ineligibilityBullets: [
+      "Direct grants to individuals",
+      "For-profit employers as lead applicant",
+      "Capital campaigns, endowment, or debt retirement",
+      "Activities outside US public health scope",
+    ],
+    irs990GivingTrend: [
+      { year: 2018, amount: 5.2 },
+      { year: 2019, amount: 5.8 },
+      { year: 2020, amount: 6.5 },
+      { year: 2021, amount: 7.8 },
+      { year: 2022, amount: 8.2 },
+    ],
   },
   {
     id: "G-2025-043",
@@ -86,6 +162,10 @@ export const grants: Grant[] = [
     projectGroup: "General Op",
     priority: "P1",
     renewalLikelihood: "High",
+    serviceArea: "Capital region — arts, youth development, and neighborhood stabilization grantees",
+    geography: "Hartford, CT (HQ)",
+    programSummary:
+      "General operating support keeps backbone staffing for pooled learning, cohort facilitation, and shared measurement. Hartford’s PO asked for clearer cash-flow narrative after last year’s one-time capital grant; this cycle emphasizes 18-month runway, reserve policy, and how GOS strengthens partner sub-grants.",
   },
   {
     id: "G-2025-044",
@@ -105,6 +185,10 @@ export const grants: Grant[] = [
     projectGroup: "Health Equity",
     priority: "P2",
     renewalLikelihood: "Unknown",
+    serviceArea: "US + select global south pilot communities (systems-change narrative)",
+    geography: "Remote-first team · board anchor in New York, NY",
+    programSummary:
+      "Skoll’s systems-change cohort looks for leverage on economic mobility and climate justice intersections. We are still validating whether our operating model fits their theory of change vs. a program-restricted ask. Research stage work is focused on comparable awards, governance expectations, and how much co-funding Skoll typically expects before first site visit.",
   },
   {
     id: "G-2025-045",
@@ -609,7 +693,7 @@ export const grants: Grant[] = [
   },
   {
     id: "G-2026-SKW",
-    title: "Wetlands & Watershed Restoration · Skoll",
+    title: "Wetlands & Watershed Restoration",
     funder: "Skoll Foundation",
     funderType: "Private",
     stage: "Application In Progress",
@@ -670,7 +754,7 @@ export const grants: Grant[] = [
   },
   {
     id: "G-2026-CPT",
-    title: "CenterPoint Foundation · General Program Support",
+    title: "General Program Support",
     funder: "CenterPoint Energy Foundation",
     funderType: "Corporate",
     stage: "Awarded - Active",
@@ -690,7 +774,7 @@ export const grants: Grant[] = [
   },
   {
     id: "G-2026-ONB",
-    title: "Old National Bank · Neighborhood Investment Fund",
+    title: "Neighborhood Investment Fund",
     funder: "Old National Bank",
     funderType: "Corporate",
     stage: "Application In Progress",
@@ -710,7 +794,7 @@ export const grants: Grant[] = [
   },
   {
     id: "G-2026-VER",
-    title: "Versafund · Open RFP (Program Expansion)",
+    title: "Open RFP (Program Expansion)",
     funder: "Versafund",
     funderType: "Private",
     stage: "Application In Progress",
@@ -731,7 +815,7 @@ export const grants: Grant[] = [
   },
   {
     id: "G-2026-FRY",
-    title: "Fry Foundation · Employment & Economic Mobility",
+    title: "Employment & Economic Mobility",
     funder: "Fry Foundation",
     funderType: "Private",
     stage: "Researching",

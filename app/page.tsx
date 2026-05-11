@@ -7,13 +7,14 @@ import { TopBar } from "@/components/manage/top-bar"
 import { GrainBar, type Grain } from "@/components/manage/grain-bar"
 import { CommandCenter } from "@/components/manage/command-center"
 import { AllGrants } from "@/components/manage/all-grants"
-import { GrantPage } from "@/components/manage/grant-page"
+import { GrantDetailsPage } from "@/components/manage/grant-details-page"
 import { AgentRail } from "@/components/manage/agent-rail"
 import { ChatPanelStandalone } from "@/components/manage/chat-panel.standalone"
 import { MixedPrototype } from "@/components/manage/mixed-prototype"
 import { MixedPrototypeAlt } from "@/components/manage/mixed-prototype-alt"
 import { OPERATOR_INITIAL_MESSAGES, OPERATOR_SUGGESTIONS } from "@/components/manage/operator-initial"
 import { grants } from "@/lib/manage/data"
+import { grantDisplayTitle } from "@/lib/manage/grant-context"
 import { ManagePrototypeSidebar } from "@/components/sidebar/manage-prototype-sidebar"
 
 function StaticCommandCenter() {
@@ -30,7 +31,7 @@ function StaticCommandCenter() {
     setActiveGrantId(null)
   }
 
-  const contextLabel = grant ? grant.title : grain === "command" ? "My work" : "All grants table"
+  const contextLabel = grant ? grantDisplayTitle(grant) : grain === "command" ? "My work" : "All grants table"
 
   return (
     <div className="shadow-bleed-scroll flex min-h-screen w-full min-w-0 max-w-[100vw] overflow-x-hidden bg-white">
@@ -53,7 +54,7 @@ function StaticCommandCenter() {
           breadcrumb={
             grant
               ? {
-                  label: grant.title,
+                  label: grantDisplayTitle(grant),
                   onBack: closeGrant,
                 }
               : null
@@ -63,7 +64,7 @@ function StaticCommandCenter() {
         <main className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
           {grant ? (
             <div className="shadow-bleed-scroll min-h-0 min-w-0 flex-1 overflow-auto">
-              <GrantPage grantId={grant.id} />
+              <GrantDetailsPage grantId={grant.id} />
             </div>
           ) : grain === "command" ? (
             <div className="shadow-bleed-scroll min-h-0 min-w-0 flex-1 overflow-auto">
@@ -101,7 +102,7 @@ function OperatorAllGrants() {
     setActiveGrantId(null)
   }
 
-  const contextLabel = grant ? grant.title : "All grants table"
+  const contextLabel = grant ? grantDisplayTitle(grant) : "All grants table"
 
   return (
     <div className="shadow-bleed-scroll flex min-h-screen w-full min-w-0 max-w-[100vw] overflow-x-hidden bg-white">
@@ -117,7 +118,7 @@ function OperatorAllGrants() {
         {grant ? (
           <GrainBar
             breadcrumb={{
-              label: grant.title,
+              label: grantDisplayTitle(grant),
               onBack: closeGrant,
             }}
           />
@@ -126,7 +127,7 @@ function OperatorAllGrants() {
         <main className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
           {grant ? (
             <div className="shadow-bleed-scroll min-h-0 min-w-0 flex-1 overflow-auto">
-              <GrantPage grantId={grant.id} />
+              <GrantDetailsPage grantId={grant.id} />
             </div>
           ) : (
             <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col gap-6 p-6 md:flex-row">

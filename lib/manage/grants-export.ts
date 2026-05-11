@@ -5,6 +5,7 @@
 import { jsPDF } from "jspdf"
 import autoTable from "jspdf-autotable"
 import { team } from "@/lib/manage/data"
+import { grantDisplayTitle } from "@/lib/manage/grant-context"
 import type { Grant } from "@/lib/manage/types"
 import { awardedSumGrant, renewalStatusForGrant } from "@/lib/manage/funder-portfolio"
 
@@ -30,7 +31,7 @@ function fmtBoardAward(n: number): string {
 export function formatGrantExportCell(grant: Grant, columnKey: string): string {
   switch (columnKey) {
     case "grant":
-      return `${grant.title} (${grant.id})${grant.flagged ? " · Flagged" : ""}${grant.blocked ? " · Blocked" : ""}`
+      return `${grantDisplayTitle(grant)} (${grant.id})${grant.flagged ? " · Flagged" : ""}${grant.blocked ? " · Blocked" : ""}`
     case "funder":
       return grant.funder
     case "status":

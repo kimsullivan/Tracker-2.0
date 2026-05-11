@@ -49,6 +49,36 @@ export type Grant = {
   blocked?: boolean
   blockedReason?: string
   flagged?: boolean
+  /** Counties, markets, or “who / where we serve” (shown on grant header & overview). */
+  serviceArea?: string
+  /** Applicant HQ or prime location line (city, state). */
+  geography?: string
+  /** 2–4 sentences for Overview; falls back to generated copy when omitted. */
+  programSummary?: string
+  /** Opportunity tab — applicant / org location (not service territory). */
+  opportunityLocation?: string
+  /** Where funded project activity occurs (sites, markets, facilities). */
+  projectLocation?: string
+  /** Applicant or program residency footprint, if applicable. */
+  residencyLocation?: string
+  /** Form 990 / 990-PF notes for diligence (private); federal uses different public filings. */
+  irs990Snapshot?: string
+  /** Short 990 highlights for Opportunity overview (optional). */
+  irs990Metrics?: { label: string; value: string }[]
+  /** Declared exclusions or eligibility barriers. */
+  ineligibility?: string
+  /** Other compliance / fit notes (match, advocacy limits, etc.). */
+  opportunityCompliance?: string
+  /** Opportunity overview — narrative bullets (priority focus). */
+  opportunityPriorityAreas?: string[]
+  /** Opportunity overview — allowable cost / program uses. */
+  opportunityFundingUses?: string[]
+  /** Opportunity overview — eligible applicant classes. */
+  opportunityEligibleApplicants?: string[]
+  /** Hard exclusions as list items (optional; falls back to parsing ineligibility copy). */
+  ineligibilityBullets?: string[]
+  /** 990 giving trend for bar chart (amounts in millions USD). */
+  irs990GivingTrend?: { year: number; amount: number }[]
 }
 
 /** Opening My Work issue → grant detail: which field to spotlight */

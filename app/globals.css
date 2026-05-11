@@ -203,6 +203,8 @@
   --color-twilight-250: #cdc8e8;
   --color-twilight-300: #6d6abc;
   --color-twilight-350: #4a4588;
+  /* Text / icon emphasis between brand (300) and deep (350) */
+  --color-twilight-400: #5b56a2;
   --color-persimmon-400: #f0857a;
   --color-persimmon-500: #e06b60;
   --color-persimmon-700: #b8544a;

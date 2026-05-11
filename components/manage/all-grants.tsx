@@ -7,6 +7,7 @@ import type { CSSProperties, ReactNode } from "react"
 import { grants as grantsData, stageOrder, team } from "@/lib/manage/data"
 import type { Grant, Stage, FunderType } from "@/lib/manage/types"
 import { grantDeadlineInCalendarYear } from "@/lib/manage/board-report"
+import { grantDisplayTitle } from "@/lib/manage/grant-context"
 import { cn } from "@/lib/utils"
 import { PriorityPill, StagePill } from "./status-pill"
 import { OwnerAvatar } from "./owner-avatar"
@@ -217,7 +218,7 @@ const RENEWAL_SORT: Record<Grant["renewalLikelihood"], number> = {
 function sortValueForColumn(g: Grant, key: ColKey): string | number {
   switch (key) {
     case "grant":
-      return g.title.toLowerCase()
+      return grantDisplayTitle(g).toLowerCase()
     case "funder":
       return g.funder.toLowerCase()
     case "status": {
@@ -2095,7 +2096,7 @@ function Cell({
           <div className="flex min-w-0 items-center gap-2">
             {grant.flagged && <Flag className="h-3 w-3 shrink-0 text-chart-4" />}
             <div className="min-w-0">
-              <div className="truncate font-medium text-foreground">{grant.title}</div>
+              <div className="truncate font-medium text-foreground">{grantDisplayTitle(grant)}</div>
               <div className="mt-0.5 flex items-center gap-1.5">
                 <span className="font-mono text-[10px] text-muted-foreground">{grant.id}</span>
                 {grant.blocked && (

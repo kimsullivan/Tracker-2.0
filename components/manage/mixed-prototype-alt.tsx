@@ -4,7 +4,7 @@ import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { FilledSparkle } from "@/components/ui/filled-sparkle"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
-import { GrantPage } from "@/components/manage/grant-page"
+import { GrantDetailsPage } from "@/components/manage/grant-details-page"
 import { TopBar } from "@/components/manage/top-bar"
 import { GrainBar, GrainNavToggle, type Grain } from "@/components/manage/grain-bar"
 import { CommandCenterWorkspace, Greeting, MyWorkAttentionStrip, PulseStripBridge, useMyWorkQueueState } from "@/components/manage/command-center"
@@ -19,6 +19,7 @@ import {
 } from "@/components/manage/chat-panel.standalone"
 import type { ChatTaskAction } from "@/components/manage/chat-inline-viz"
 import { grants } from "@/lib/manage/data"
+import { grantDisplayTitle } from "@/lib/manage/grant-context"
 import { ManagePrototypeSidebar } from "@/components/sidebar/manage-prototype-sidebar"
 import { MixAltUiProvider } from "@/components/manage/mix-alt-ui-context"
 import {
@@ -128,7 +129,7 @@ export function MixedPrototypeAlt() {
       upcomingThresholdDays,
       snoozedIssueIds,
       lastIssueContext: issueNav,
-      activeGrantTitle: grant?.title ?? null,
+      activeGrantTitle: grant ? grantDisplayTitle(grant) : null,
       currentViewLabel,
       discoveryDeadlineNextMonth: discovery.deadlineNextMonth,
       discoveryTasksNone: discovery.tasksNone,
@@ -306,7 +307,7 @@ export function MixedPrototypeAlt() {
     [workQueue.hygienePendingCount],
   )
 
-  const contextLabel = grant ? grant.title : grain === "command" ? "My work" : "All grants table"
+  const contextLabel = grant ? grantDisplayTitle(grant) : grain === "command" ? "My work" : "All grants table"
 
   const pageScrollStickyPath = !grant && grain === "all-grants"
   /** My work: shell overflow-x/y hidden clips row shadows; match KPI strip (no clipping ancestors). */
@@ -352,7 +353,7 @@ export function MixedPrototypeAlt() {
         {grant ? (
           <GrainBar
             breadcrumb={{
-              label: grant.title,
+              label: grantDisplayTitle(grant),
               onBack: closeGrant,
             }}
           />
@@ -366,7 +367,7 @@ export function MixedPrototypeAlt() {
         >
           {grant ? (
             <div className="shadow-bleed-scroll min-h-0 min-w-0 flex-1 overflow-auto">
-              <GrantPage
+              <GrantDetailsPage
                 grantId={grant.id}
                 issueHighlight={issueNav}
                 onDismissHighlight={() => setIssueNav(null)}
