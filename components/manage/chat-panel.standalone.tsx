@@ -345,15 +345,30 @@ function StreamingAssistantPlain({
     }
   }, [text, maxStreamMs])
 
+  const paragraphs = visible.split(/\n\n+/).filter((chunk) => chunk.length > 0)
+
   return (
-    <div className="relative min-w-0">
-      <p className={className}>{visible}</p>
-      {active ? (
+    <div className="relative min-w-0 space-y-2.5">
+      {paragraphs.length === 0 && active ? (
         <span
-          className="ml-px inline-block h-[1em] w-[2px] translate-y-px rounded-full bg-primary/45 align-middle"
+          className="inline-block h-[1em] w-[2px] translate-y-px rounded-full bg-primary/45 align-middle"
           aria-hidden
         />
       ) : null}
+      {paragraphs.map((chunk, idx) => {
+        const isLast = idx === paragraphs.length - 1
+        return (
+          <p key={idx} className={className}>
+            {chunk}
+            {isLast && active ? (
+              <span
+                className="ml-px inline-block h-[1em] w-[2px] translate-y-px rounded-full bg-primary/45 align-middle"
+                aria-hidden
+              />
+            ) : null}
+          </p>
+        )
+      })}
     </div>
   )
 }
@@ -385,6 +400,18 @@ export type ChatPanelStandaloneProps = {
   mixAltTwilightQuickPrompts?: boolean
   /** When this increments, appends a “save view?” assistant nudge (mixed All grants agent). */
   saveViewNudgeSeq?: number
+  /** Placeholder for the composer textarea. */
+  inputPlaceholder?: string
+  /**
+   * Shown directly above the composer until the user sends another message after load.
+   * “Suggested follow-ups” label + pills that submit the chip text.
+   */
+  composerFollowUpChips?: string[]
+  /**
+   * Quick prompts above the composer. Omit to use `suggestions` / defaults.
+   * Pass `[]` to hide the row (e.g. insight thread uses composer follow-ups only).
+   */
+  footerQuickPrompts?: string[]
 }
 
 export const ChatPanelStandalone = forwardRef<ChatPanelStandaloneHandle, ChatPanelStandaloneProps>(
@@ -409,6 +436,9 @@ export const ChatPanelStandalone = forwardRef<ChatPanelStandaloneHandle, ChatPan
       scriptedAgentPlainText,
       mixAltTwilightQuickPrompts,
       saveViewNudgeSeq,
+      inputPlaceholder,
+      composerFollowUpChips,
+      footerQuickPrompts,
     },
     ref,
   ) {
@@ -418,8 +448,15 @@ export const ChatPanelStandalone = forwardRef<ChatPanelStandaloneHandle, ChatPan
     () => initialMessagesProp ?? defaultManageInitialMessages(),
   )
   const panelTitle = titleProp ?? (variant === "operator" ? "Operator" : "Grants assistant")
-  const suggestionList = suggestionsProp ?? SUGGESTIONS
+  const suggestionList = footerQuickPrompts !== undefined ? footerQuickPrompts : suggestionsProp ?? SUGGESTIONS
   const isEmbedded = layout === "embedded"
+  const composerPlaceholder = inputPlaceholder ?? "Ask anything…"
+  const showComposerFollowUps =
+    Boolean(composerFollowUpChips?.length) &&
+    messages.length === 2 &&
+    messages[0]?.role === "user" &&
+    messages[1]?.role === "agent" &&
+    thinkingPhase === "idle"
   const thinkingTimeoutsRef = useRef<number[]>([])
   const bottomRef = useRef<HTMLDivElement>(null)
   const lastSaveNudgeSeqRef = useRef(0)
@@ -750,34 +787,36 @@ export const ChatPanelStandalone = forwardRef<ChatPanelStandaloneHandle, ChatPan
           isEmbedded ? "px-5 pb-4 pt-2" : "px-4 pb-3 pt-1",
         )}
       >
-        <div className="space-y-8">
-          {messages.map((m) =>
-            m.role === "agent" ? (
-              <AgentMessageTurn
-                key={m.id}
-                m={m}
-                mdClass={mdClass}
-                scrollToBottom={scrollToBottom}
-                maxStreamMs={streamMaxMs}
-                panelVariant={variant}
-                onTaskAction={handleTaskAction}
-              />
-            ) : (
-              <div key={m.id} className="flex flex-col items-end gap-1">
-                <p className={USER_TWILIGHT_BUBBLE}>{m.body}</p>
-                <time
-                  className="text-[11px] text-muted-foreground/80 tabular-nums"
-                  dateTime={new Date(m.at).toISOString()}
-                >
-                  {new Date(m.at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
-                </time>
-              </div>
-            ),
-          )}
+        <div>
+          {messages.map((m, i) => (
+            <div key={m.id} className={cn("space-y-3", i > 0 && "mt-6")}>
+              {m.role === "agent" ? (
+                <AgentMessageTurn
+                  m={m}
+                  mdClass={mdClass}
+                  scrollToBottom={scrollToBottom}
+                  maxStreamMs={streamMaxMs}
+                  panelVariant={variant}
+                  onTaskAction={handleTaskAction}
+                />
+              ) : (
+                <div className="flex flex-col items-end gap-1">
+                  <p className={USER_TWILIGHT_BUBBLE}>{m.body}</p>
+                  <time
+                    className="text-[11px] text-muted-foreground/80 tabular-nums"
+                    dateTime={new Date(m.at).toISOString()}
+                  >
+                    {new Date(m.at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
+                  </time>
+                </div>
+              )}
+            </div>
+          ))}
 
           {thinkingPhase !== "idle" ? (
             <div
               className={cn(
+                messages.length > 0 && "mt-6",
                 "bg-transparent shadow-none",
                 thinkingPhase === "thinking" && "thinking-enter-wrap",
                 thinkingPhase === "exiting" && "thinking-exit-wrap",
@@ -797,24 +836,50 @@ export const ChatPanelStandalone = forwardRef<ChatPanelStandaloneHandle, ChatPan
           isEmbedded ? "bg-background" : "bg-card/50 backdrop-blur-sm",
         )}
       >
-        <div className="mb-2 flex flex-wrap gap-1">
-          {suggestionList.map((s) => (
-            <button
-              key={s}
-              type="button"
-              disabled={isThinkingBusy}
-              onClick={() => send(s)}
-              className={cn(
-                "disabled:opacity-40",
-                mixAltTwilightQuickPrompts
-                  ? MIX_ALT_SUGGESTION_CHIP
-                  : "rounded-full border border-border/60 bg-background/80 px-2 py-0.5 text-[11px] text-muted-foreground transition-colors hover:border-primary/25 hover:text-foreground",
-              )}
-            >
-              {s}
-            </button>
-          ))}
-        </div>
+        {suggestionList.length > 0 ? (
+          <div className="mb-2 flex flex-wrap gap-1">
+            {suggestionList.map((s) => (
+              <button
+                key={s}
+                type="button"
+                disabled={isThinkingBusy}
+                onClick={() => send(s)}
+                className={cn(
+                  "disabled:opacity-40",
+                  mixAltTwilightQuickPrompts
+                    ? MIX_ALT_SUGGESTION_CHIP
+                    : "rounded-full border border-border/60 bg-background/80 px-2 py-0.5 text-[11px] text-muted-foreground transition-colors hover:border-primary/25 hover:text-foreground",
+                )}
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+        ) : null}
+
+        {showComposerFollowUps && composerFollowUpChips ? (
+          <div className="mb-2 space-y-1.5">
+            <p className="text-[11px] font-medium text-muted-foreground">Suggested follow-ups</p>
+            <div className="flex flex-wrap gap-1.5">
+              {composerFollowUpChips.map((chip) => (
+                <button
+                  key={chip}
+                  type="button"
+                  disabled={isThinkingBusy}
+                  onClick={() => send(chip)}
+                  className={cn(
+                    "disabled:opacity-40",
+                    mixAltTwilightQuickPrompts
+                      ? MIX_ALT_SUGGESTION_CHIP
+                      : "rounded-full border border-border/60 bg-background/80 px-2 py-0.5 text-[11px] text-muted-foreground transition-colors hover:border-primary/25 hover:text-foreground",
+                  )}
+                >
+                  {chip}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
 
         <PromptInput
           className="rounded-2xl border-border/60 bg-background/90 shadow-sm"
@@ -826,7 +891,7 @@ export const ChatPanelStandalone = forwardRef<ChatPanelStandaloneHandle, ChatPan
           maxHeight={160}
         >
           <PromptInputTextarea
-            placeholder="Ask anything…"
+            placeholder={composerPlaceholder}
             className="text-[15px] text-[#333] placeholder:text-muted-foreground dark:text-neutral-200"
           />
           <PromptInputActions className="justify-end gap-2 px-1 pb-1">

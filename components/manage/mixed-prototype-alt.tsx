@@ -12,6 +12,12 @@ import { PulseStripBoardLeadership } from "@/components/manage/all-grants-kpi-ti
 import { passesKpiDrill, type KpiDrill } from "@/lib/manage/kpi-bridge"
 import type { Grant, IssueNavigationContext } from "@/lib/manage/types"
 import { AllGrants, INSTRUMENTL_CANNED_VIEW_IDS, type AllGrantsFilterApi } from "@/components/manage/all-grants"
+import { PipelineInsightBanner } from "@/components/manage/pipeline-insight-banner"
+import {
+  getPipelineInsightInitialMessages,
+  matchPipelineInsightChips,
+  PIPELINE_INSIGHT_FOLLOW_UP_CHIPS,
+} from "@/components/manage/pipeline-insight-seed"
 import {
   ChatPanelStandalone,
   getElizabethAssistantInitialMessages,
@@ -48,6 +54,8 @@ export function MixedPrototypeAlt() {
   const [grain, setGrain] = useState<Grain>("command")
   const [activeGrantId, setActiveGrantId] = useState<string | null>(null)
   const [operatorChatOpen, setOperatorChatOpen] = useState(false)
+  const [pipelineInsightChatSession, setPipelineInsightChatSession] = useState(false)
+  const [pipelineInsightBannerDismissed, setPipelineInsightBannerDismissed] = useState(false)
   const [tableScopeGrants, setTableScopeGrants] = useState<Grant[]>(grants)
   const [kpiDrill, setKpiDrill] = useState<KpiDrill | null>(null)
   const [operatorBuiltinSlice, setOperatorBuiltinSlice] = useState("all")
@@ -114,6 +122,7 @@ export function MixedPrototypeAlt() {
   const tableLayoutAccumRef = useRef(0)
 
   const mixAltInitialMessages = useMemo(() => getElizabethAssistantInitialMessages(), [])
+  const pipelineInsightInitialMessages = useMemo(() => getPipelineInsightInitialMessages(), [])
 
   /** Pulse / Board bridge KPIs only for the three Instrumentl built-ins — not sample presets or user-saved views. */
   const showInstrumentlOperatorKpis = INSTRUMENTL_CANNED_VIEW_IDS.has(operatorViewId)
@@ -150,6 +159,17 @@ export function MixedPrototypeAlt() {
     discovery.tasksNone,
     chatSavedViews,
   ])
+
+  const scriptedTurnWithPipelineInsight = useCallback(
+    (text: string) => {
+      if (pipelineInsightChatSession) {
+        const hit = matchPipelineInsightChips(text)
+        if (hit) return hit
+      }
+      return matchMixAltAgentTurn(text, agentSnapshot())
+    },
+    [pipelineInsightChatSession, agentSnapshot],
+  )
 
   const applyMixAltEffects = useCallback(
     (effects: MixAltEffect[]) => {
@@ -464,13 +484,26 @@ export function MixedPrototypeAlt() {
                                 : operatorBuiltinSlice === "funder-portfolio"
                                   ? null
                                   : (
-                                      <div className="self-stretch px-2 pb-3 pt-2 sm:px-4 sm:pb-4 sm:pt-3">
-                                        <PulseStripBridge
-                                          baseScope={tableScopeGrants}
-                                          drill={kpiDrill}
-                                          onDrill={handleKpiDrill}
-                                        />
-                                      </div>
+                                      <>
+                                        <div className="self-stretch px-2 pb-3 pt-2 sm:px-4 sm:pb-4 sm:pt-3">
+                                          <PulseStripBridge
+                                            baseScope={tableScopeGrants}
+                                            drill={kpiDrill}
+                                            onDrill={handleKpiDrill}
+                                          />
+                                        </div>
+                                        {!pipelineInsightBannerDismissed ? (
+                                          <div className="self-stretch px-2 pb-1 sm:px-4 sm:pb-2">
+                                            <PipelineInsightBanner
+                                              onExplainMore={() => {
+                                                setPipelineInsightChatSession(true)
+                                                setOperatorChatOpen(true)
+                                                setPipelineInsightBannerDismissed(true)
+                                              }}
+                                            />
+                                          </div>
+                                        ) : null}
+                                      </>
                                     )
                           }
                           operatorBuiltinAllLabel="Where are we?"
@@ -508,16 +541,22 @@ export function MixedPrototypeAlt() {
                   <div className="operator-chat-enter flex h-[min(calc(42vh+12px),calc(26rem+12px))] max-h-[492px] min-h-[232px] w-full shrink-0 flex-col overflow-visible rounded-xl border border-elevated-stroke bg-background/95 shadow-sm backdrop-blur-sm dark:bg-card dark:shadow-sm md:h-auto md:max-h-none md:min-h-0 md:flex-1">
                     <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl">
                       <ChatPanelStandalone
+                        key={pipelineInsightChatSession ? "chat-pipeline-insight" : "chat-default"}
                         ref={chatPanelRef}
                         variant="manage"
                         layout="embedded"
                         className="h-full min-h-0 overflow-hidden rounded-none border-0 bg-transparent shadow-none backdrop-blur-none dark:bg-transparent"
                         contextLabel={contextLabel}
-                        onClose={() => setOperatorChatOpen(false)}
+                        onClose={() => {
+                          setOperatorChatOpen(false)
+                          setPipelineInsightChatSession(false)
+                        }}
                         title="Grants assistant"
-                        initialMessages={mixAltInitialMessages}
+                        initialMessages={
+                          pipelineInsightChatSession ? pipelineInsightInitialMessages : mixAltInitialMessages
+                        }
                         suggestions={chatSuggestions}
-                        scriptedTurn={(text) => matchMixAltAgentTurn(text, agentSnapshot())}
+                        scriptedTurn={scriptedTurnWithPipelineInsight}
                         onScriptedEffects={applyMixAltEffects}
                         scriptedFallbackOnly
                         fallbackBody={mixAltFallbackBody()}
@@ -526,6 +565,13 @@ export function MixedPrototypeAlt() {
                         mixAltTwilightQuickPrompts
                         onMixAltTaskAction={handleMixAltChatAction}
                         saveViewNudgeSeq={saveViewNudgeSeq}
+                        composerFollowUpChips={
+                          pipelineInsightChatSession ? PIPELINE_INSIGHT_FOLLOW_UP_CHIPS : undefined
+                        }
+                        footerQuickPrompts={pipelineInsightChatSession ? [] : undefined}
+                        inputPlaceholder={
+                          pipelineInsightChatSession ? "Ask a follow-up..." : undefined
+                        }
                       />
                     </div>
                   </div>
@@ -538,7 +584,10 @@ export function MixedPrototypeAlt() {
         {!grant && (grain === "all-grants" || grain === "command") && !operatorChatOpen ? (
           <button
             type="button"
-            onClick={() => setOperatorChatOpen(true)}
+            onClick={() => {
+              setPipelineInsightChatSession(false)
+              setOperatorChatOpen(true)
+            }}
             className="fixed right-4 bottom-4 z-50 group flex h-12 w-12 items-center justify-center rounded-full text-primary-foreground shadow-lg ring-1 ring-border/40 transition-all hover:scale-105"
             style={{
               background: "linear-gradient(135deg, var(--primary), var(--chart-1))",

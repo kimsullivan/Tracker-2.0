@@ -2174,11 +2174,7 @@ export function GrantDetailsPage({
   const [mainTab, setMainTab] = useState<MainTab>("overview")
   const [oppTab, setOppTab] = useState<OppTab>("overview")
   const [ownerId, setOwnerId] = useState(grant.ownerId)
-  const [expandedTask, setExpandedTask] = useState<string | null>(() => {
-    const g = grants.find((x) => x.id === grantId) || grants[0]
-    const list = seedTasksByBucket(grantLifecycleBucket(g.stage), g.ownerId)
-    return list[0]?.id ?? null
-  })
+  const [expandedTask, setExpandedTask] = useState<string | null>(null)
   const [metric, setMetric] = useState<TrendMetric>("giving")
   const [ownerSearch, setOwnerSearch] = useState("")
   const [budgetSeg, setBudgetSeg] = useState<"category" | "month" | "site">("category")
@@ -2585,7 +2581,7 @@ export function GrantDetailsPage({
     setTasks(seeded)
     setTaskUpdates(seedTaskThreadsByBucket(bucket))
     setAuditDays(buildAuditSeedByBucket(bucket))
-    setExpandedTask(seeded[0]?.id ?? null)
+    setExpandedTask(null)
     setTaskDone({})
     setTaskComposer({})
     setShowOlderAudit(false)
@@ -2756,26 +2752,6 @@ export function GrantDetailsPage({
   return (
     <KpiChartMotionProvider>
     <div className="mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6">
-      {activeHighlight && activeHighlight.fieldKey !== "submit_application" ? (
-        <div
-          className="flex flex-wrap items-start justify-between gap-3 rounded-lg border border-primary/25 bg-primary/[0.06] px-4 py-3 text-sm text-foreground"
-          role="status"
-        >
-          <p className="min-w-0 leading-snug">
-            <span className="font-semibold">Highlighted: {activeHighlight.fieldLabel}</span>
-            <span className="text-muted-foreground"> — {activeHighlight.reason}</span>
-          </p>
-          <button
-            type="button"
-            onClick={dismissActiveHighlight}
-            className="shrink-0 rounded-md p-1 text-muted-foreground hover:bg-background/80 hover:text-foreground"
-            aria-label="Dismiss highlight"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-      ) : null}
-
       <nav className="flex flex-wrap items-center gap-1.5 text-[13px] text-muted-foreground">
         <button type="button" className="hover:text-foreground" onClick={() => toast("Navigate", { description: "Manage home" })}>
           Manage

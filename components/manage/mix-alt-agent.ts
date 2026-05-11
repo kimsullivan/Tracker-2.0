@@ -210,7 +210,7 @@ const MIXALT_SUGGESTIONS_MY_WORK: string[] = [
 ]
 
 const MIXALT_SUGGESTIONS_ALL_GRANTS: string[] = [
-  "Filter by funder type",
+  "Show only federal grants",
   "Group by owner",
   "What's my pipeline this quarter?",
   "Show grants I haven't touched in 30 days",
@@ -436,6 +436,39 @@ export function countTableLayoutEffects(effects: MixAltEffect[]): number {
   return n
 }
 
+/** Natural-language signals that the user wants a toolbar / table scope change (not Q&A). */
+function wantsToolbarScopeMutation(t: string): boolean {
+  return (
+    t.includes("filter") ||
+    t.includes("show") ||
+    t.includes("only") ||
+    t.includes("narrow") ||
+    t.includes("apply") ||
+    t.includes("switch") ||
+    /\bset\b/.test(t) ||
+    t.includes("subset") ||
+    t.includes("limit") ||
+    (t.includes("table") && /\b(grants?|portfolio|rows?)\b/.test(t))
+  )
+}
+
+/** Message is only a funder lane (e.g. "federal", "only private grants") — still apply chip. */
+function isBareFunderFilterMessage(t: string): boolean {
+  const s = t.replace(/\s+/g, " ").trim()
+  return /^(?:only\s+)?(?:federal|private|(?:private\s+)?foundations?|corporate|state|local)(?:\s+only)?(?:\s+grants)?\.?$/.test(
+    s,
+  )
+}
+
+function isBareOwnerFilterMessage(t: string, ownerId: string): boolean {
+  const member = team.find((m) => m.id === ownerId)
+  if (!member) return false
+  const first = member.name.split(" ")[0]!.toLowerCase()
+  if (first.length < 2) return false
+  const s = t.replace(/\s+/g, " ").trim()
+  return new RegExp(`^(?:only\\s+)?${first}(?:\\s+only)?(?:\\s+grants)?\\.?$`, "i").test(s)
+}
+
 function parseSortFromText(t: string): { column: ColKey; dir: SortDir } | null {
   if (!/\bsort\b/.test(t)) return null
   let dir: SortDir | undefined
@@ -588,10 +621,7 @@ export function matchMixAltAgentTurn(raw: string, snap: MixAltAgentSnapshot): Mi
   }
 
   const funderKw = parseFunderTypeKeyword(t)
-  if (
-    funderKw &&
-    (t.includes("filter") || t.includes("show") || t.includes("only") || t.includes("narrow"))
-  ) {
+  if (funderKw && (wantsToolbarScopeMutation(t) || isBareFunderFilterMessage(t))) {
     return {
       agentBody: `Done. Funder type filter set to ${funderKw}.`,
       effects: [{ type: "set_funder_type_filter", funderType: funderKw }],
@@ -604,35 +634,15 @@ export function matchMixAltAgentTurn(raw: string, snap: MixAltAgentSnapshot): Mi
     !/\bgroup\b/.test(t) &&
     !/\bsort\b/.test(t) &&
     !parseColumnMove(t) &&
-    (t.includes("filter") ||
-      t.includes("only") ||
+    (wantsToolbarScopeMutation(t) ||
       /\bowner\s+[a-z]+\b/.test(t) ||
-      (t.includes("show") && (t.includes("grant") || t.includes("portfolio"))) ||
-      t.includes("filter to me"))
+      t.includes("filter to me") ||
+      isBareOwnerFilterMessage(t, ownerPick))
   ) {
     const label = team.find((m) => m.id === ownerPick)?.name ?? ownerPick
     return {
       agentBody: `Done. Owner filter set to ${label}.`,
       effects: [{ type: "set_owner_filter", ownerId: ownerPick }],
-    }
-  }
-
-  if (t.includes("filter by funder type") || (t.includes("filter") && t.includes("funder type"))) {
-    return {
-      agentBody:
-        "Say filter federal, private or foundation, corporate, state, or local—I’ll set the Funder type chip for you.",
-      effects: [],
-    }
-  }
-
-  if (
-    (t.includes("filter by owner") || (t.includes("filter") && t.includes("by owner"))) &&
-    !t.includes("funder")
-  ) {
-    return {
-      agentBody:
-        "Try filter Maria, Elizabeth only, or filter to me—I’ll match it to the Owner chip.",
-      effects: [],
     }
   }
 
@@ -728,7 +738,7 @@ export function matchMixAltAgentTurn(raw: string, snap: MixAltAgentSnapshot): Mi
   if (t.includes("what can you do") || (t === "help") || t.includes("what can you")) {
     return {
       agentBody:
-        "I can set fiscal year, funder type, and owner filters; change grouping and sort; show, hide, or reorder columns; and save views. Try the suggestion chips below — for example “filter federal”, “group by deadline”, or “hide CFDA column”.",
+        "I can set fiscal year, funder type, and owner filters on the grants toolbar; change grouping and sort; show, hide, or reorder columns; and save views. Try phrases like “show only federal grants”, “filter Maria”, “apply private”, “group by deadline”, or “clear all filters”.",
       effects: [],
     }
   }
