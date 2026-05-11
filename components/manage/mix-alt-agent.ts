@@ -41,59 +41,65 @@ export type MixAltAgentSnapshot = {
   fiscalYearLabels: string[]
 }
 
+/** Subsequent agent message appended after the primary reply has streamed in.
+ *  Useful for showing a result (e.g., a chart) and *then* a separate prose
+ *  message with a follow-up CTA so the user perceives a natural beat. */
+export type MixAltAgentFollowUp = {
+  /** Delay (ms) from when the primary message was appended. */
+  delayMs: number
+  agentBody: string
+  sources?: ChatSource[]
+  viz?: ChatViz[]
+  /** Force markdown formatting for this follow-up (defaults to inheriting). */
+  markdown?: boolean
+}
+
 export type MixAltAgentTurn = {
   agentBody: string
   sources?: ChatSource[]
   viz?: ChatViz[]
   effects: MixAltEffect[]
+  /** Optional cascade of agent messages that should appear after the primary. */
+  followUps?: MixAltAgentFollowUp[]
 }
 
-/** Underspend / spend pace (Racine-style prototype): metrics + cumulative burn sparklines (% of award). */
+/** Underspend / spend pace (Racine grant): just the spenddown chart, styled to
+ *  mirror the Opportunity-tab cumulative chart treatment. */
 export function mixAltUnderspendSpendCharts(): ChatViz[] {
   return [
     {
-      kind: "metrics",
-      rows: [
-        { label: "Budget used", value: "40%", hint: "of award (prototype scenario)" },
-        { label: "Period elapsed", value: "80%", hint: "share of grant term" },
-        { label: "Behind pace", value: "~40 pts", hint: "flag when >20 pts behind" },
-      ],
-    },
-    {
-      kind: "sparkline",
-      title: "Expected cumulative burn (% of award)",
+      kind: "spend_pace",
+      title: "Spenddown — Racine Community Foundation",
+      subtitle: "Cumulative spend vs. linear plan · $185K award · Jan → Dec",
+      nowLabel: "May",
+      yUnit: "K",
       series: [
-        { x: "Start", y: 0 },
-        { x: "25%", y: 25 },
-        { x: "50%", y: 50 },
-        { x: "75%", y: 75 },
-        { x: "Now", y: 80 },
-      ],
-    },
-    {
-      kind: "sparkline",
-      title: "Actual cumulative spend (% of award)",
-      series: [
-        { x: "Start", y: 0 },
-        { x: "25%", y: 10 },
-        { x: "50%", y: 18 },
-        { x: "75%", y: 28 },
-        { x: "Now", y: 40 },
+        { month: "Jan", expected: 15, actual: 6 },
+        { month: "Feb", expected: 31, actual: 14 },
+        { month: "Mar", expected: 46, actual: 24 },
+        { month: "Apr", expected: 62, actual: 33 },
+        { month: "May", expected: 77, actual: 42 },
+        { month: "Jun", expected: 92, actual: null },
+        { month: "Jul", expected: 108, actual: null },
+        { month: "Aug", expected: 123, actual: null },
+        { month: "Sep", expected: 139, actual: null },
+        { month: "Oct", expected: 154, actual: null },
+        { month: "Nov", expected: 170, actual: null },
+        { month: "Dec", expected: 185, actual: null },
       ],
     },
   ]
 }
 
-/** CTA block: open the Racine demo grant from underspend assistant replies */
+/** Plain inline button that opens the Racine grant on its Financials/Spenddown
+ *  tab — no card treatment, just a single button below the message. */
 export function mixAltRacineGrantFollowUp(): ChatViz {
   return {
-    kind: "tasks",
-    items: [
+    kind: "inline_actions",
+    actions: [
       {
-        title: "Racine Community Foundation",
-        subtitle: "View the full grant record for budget pace, period, and activity.",
-        tone: "action",
-        actions: [{ label: "View more", href: `mixalt://grant/${RACINE_COMMUNITY_FOUNDATION_GRANT_ID}` }],
+        label: "Open Racine grant",
+        href: `mixalt://grant/${RACINE_COMMUNITY_FOUNDATION_GRANT_ID}/financials`,
       },
     ],
   }
@@ -890,9 +896,17 @@ export function matchMixAltAgentTurn(raw: string, snap: MixAltAgentSnapshot): Mi
     if (t.includes("racine") || t.includes("underspend")) {
       return {
         agentBody:
-          "This grant has used 40% of its budget but is 80% through its grant period. We flag underspend when usage is more than 20% behind expected pace. The metrics and charts summarize spend pace vs linear expectation as a percentage of the award.",
-        viz: [...mixAltUnderspendSpendCharts(), mixAltRacineGrantFollowUp()],
+          "Racine Community Foundation is tracking well behind its spend plan. At May 11 (36% through a 12-month period), the team has spent $42K of the $185K award — versus ~$67K expected by now, leaving a ~$25K gap. That trips our underspend flag (>$20K behind plan). To finish on plan they’d need to step burn up from ~$9K / mo to ~$19K / mo across the remaining ~7.5 months. Spenddown snapshot below.",
+        viz: mixAltUnderspendSpendCharts(),
         effects: [],
+        followUps: [
+          {
+            delayMs: 2600,
+            agentBody:
+              "Want to dig in? I can take you straight to the spenddown view on the Racine grant.",
+            viz: [mixAltRacineGrantFollowUp()],
+          },
+        ],
       }
     }
     if (t.includes("america") || /\bover\b/.test(t) || t.includes("overspend")) {

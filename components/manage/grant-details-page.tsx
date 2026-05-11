@@ -34,6 +34,23 @@ import {
   KPI_CHART_FONT,
   useKpiChartMotion,
 } from "@/components/manage/all-grants-kpi-tiles"
+import {
+  type AppCycle,
+  type AppCycleFilter,
+  type AppCycleRow,
+  type AppDocKind,
+  type AppSubmissionStatus,
+  type DeadlineUrgency,
+  type FlatApplicationRow,
+  deadlineRelativeLabel as appDeadlineRelativeLabel,
+  deadlineUrgency,
+  flattenApplications,
+  patchAppCycleRow,
+} from "@/lib/manage/application-cycles"
+import {
+  UploadApplicationDialog,
+  useApplicationCyclesForGrant,
+} from "@/components/manage/application-cycles-demo-context"
 import { grants, stageOrder, team } from "@/lib/manage/data"
 import {
   deadlineRelativeLabel,
@@ -80,6 +97,7 @@ import {
 import { toast } from "sonner"
 import {
   AlertCircle,
+  AlertTriangle,
   ArrowRight,
   AtSign,
   Check,
@@ -1410,40 +1428,7 @@ function seedTasksByBucket(bucket: GrantLifecycleBucket, ownerId: string): TaskR
   return seedTasksProspecting(ownerId)
 }
 
-type AppSubmissionStatus = "draft" | "in_progress" | "submitted" | "review"
-
-type AppDocKind = "LOI" | "Proposal"
-
-type AppCyclePhase = "current" | "future" | "past"
-
-type AppCycleRow = {
-  id: string
-  name: string
-  kind: AppDocKind
-  status: AppSubmissionStatus
-  ownerId: string
-  submissionDate: string
-  lastUpdated: string
-}
-
-type AppCycle = {
-  id: string
-  title: string
-  subtitle: string
-  /** Single anchor date for the cycle (YYYY-MM-DD), shown as one date in the table */
-  cycleDate: string
-  phase: AppCyclePhase
-  rows: AppCycleRow[]
-}
-
-type AppCycleFilter = "all" | AppCyclePhase
-
-type FlatApplicationRow = AppCycleRow & {
-  cycleId: string
-  cycleTitle: string
-  cycleDate: string
-  phase: AppCyclePhase
-}
+type AppCyclePhase = AppCycle["phase"]
 
 const APP_STATUS_OPTIONS: { value: AppSubmissionStatus; label: string }[] = [
   { value: "draft", label: "Draft" },
@@ -1476,95 +1461,18 @@ function formatSingleCycleDate(iso: string): string {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
 }
 
-function flattenApplications(cycles: AppCycle[], filter: AppCycleFilter): FlatApplicationRow[] {
-  const out: FlatApplicationRow[] = []
-  for (const c of cycles) {
-    if (filter !== "all" && c.phase !== filter) continue
-    for (const r of c.rows) {
-      out.push({
-        ...r,
-        cycleId: c.id,
-        cycleTitle: c.title,
-        cycleDate: c.cycleDate,
-        phase: c.phase,
-      })
-    }
-  }
-  return out
+const DEADLINE_PILL_TONE: Record<DeadlineUrgency, string> = {
+  overdue: "bg-rose-100 text-rose-900 ring-1 ring-rose-300 dark:bg-rose-950/55 dark:text-rose-100 dark:ring-rose-900/60",
+  urgent: "bg-amber-100 text-amber-950 ring-1 ring-amber-300 dark:bg-amber-950/55 dark:text-amber-100 dark:ring-amber-900/60",
+  soon: "bg-muted text-foreground ring-1 ring-border/60",
+  normal: "",
 }
 
-function seedAppCycles(ownerId: string): AppCycle[] {
-  return [
-    {
-      id: "cycle-renewal",
-      title: "Cohort 3 Renewal · Year 2",
-      subtitle: "FY 2026–2027 · Continuation",
-      cycleDate: "2026-07-01",
-      phase: "current",
-      rows: [
-        {
-          id: "row-loi-renew",
-          name: "Letter of Intent",
-          kind: "LOI",
-          status: "submitted",
-          ownerId,
-          submissionDate: "Mar 14, 2026",
-          lastUpdated: "Mar 14, 2026",
-        },
-        {
-          id: "row-budget-renew",
-          name: "Full proposal — budget narrative",
-          kind: "Proposal",
-          status: "in_progress",
-          ownerId: "grace",
-          submissionDate: "—",
-          lastUpdated: "May 2, 2026",
-        },
-      ],
-    },
-    {
-      id: "cycle-y1",
-      title: "Cohort 3 · Year 1 award",
-      subtitle: "FY 2025–2026 · Initial application",
-      cycleDate: "2025-07-01",
-      phase: "past",
-      rows: [
-        {
-          id: "row-proposal-y1",
-          name: "Full proposal (Year 1)",
-          kind: "Proposal",
-          status: "submitted",
-          ownerId,
-          submissionDate: "Jun 18, 2025",
-          lastUpdated: "Jun 20, 2025",
-        },
-      ],
-    },
-    {
-      id: "cycle-y4",
-      title: "Cohort 4 · Anticipated RFP",
-      subtitle: "FY 2027–2028",
-      cycleDate: "2027-07-01",
-      phase: "future",
-      rows: [
-        {
-          id: "row-preapp",
-          name: "Letter of intent (pre-cycle)",
-          kind: "LOI",
-          status: "draft",
-          ownerId,
-          submissionDate: "—",
-          lastUpdated: "Nov 30, 2025",
-        },
-      ],
-    },
-  ]
-}
-
-function patchAppCycleRow(cycles: AppCycle[], cycleId: string, rowId: string, patch: Partial<AppCycleRow>): AppCycle[] {
-  return cycles.map((c) =>
-    c.id !== cycleId ? c : { ...c, rows: c.rows.map((r) => (r.id === rowId ? { ...r, ...patch } : r)) },
-  )
+const DEADLINE_DOT_TONE: Record<DeadlineUrgency, string> = {
+  overdue: "bg-rose-600",
+  urgent: "bg-amber-500",
+  soon: "bg-muted-foreground/60",
+  normal: "",
 }
 
 const appFieldInputClass =
@@ -1575,19 +1483,39 @@ function ApplicationCyclesPanel({
   setAppCycles,
   ownerId,
   grant,
+  applicationHighlight,
+  onDismissApplicationHighlight,
 }: {
   appCycles: AppCycle[]
   setAppCycles: Dispatch<SetStateAction<AppCycle[]>>
   ownerId: string
   grant: Grant
+  applicationHighlight?: IssueNavigationContext | null
+  onDismissApplicationHighlight?: () => void
 }) {
   const [cycleFilter, setCycleFilter] = useState<AppCycleFilter>("all")
   const [editOpen, setEditOpen] = useState(false)
   const [editTarget, setEditTarget] = useState<{ cycleId: string; row: AppCycleRow } | null>(null)
+  const [uploadDialogOpen, setUploadDialogOpen] = useState(false)
 
   const applicationCount = useMemo(() => appCycles.reduce((n, c) => n + c.rows.length, 0), [appCycles])
 
-  const tableRows = useMemo(() => flattenApplications(appCycles, cycleFilter), [appCycles, cycleFilter])
+  /** Sort applications by deadline. Active rows (not yet submitted) come first by closest
+   *  upcoming deadline; already-submitted rows fall to the bottom, most recent first. */
+  const tableRows = useMemo(() => {
+    const rows = flattenApplications(appCycles, cycleFilter)
+    return rows.slice().sort((a, b) => {
+      const aSubmitted = a.status === "submitted" ? 1 : 0
+      const bSubmitted = b.status === "submitted" ? 1 : 0
+      if (aSubmitted !== bSubmitted) return aSubmitted - bSubmitted
+      if (aSubmitted === 0) return a.cycleDate < b.cycleDate ? -1 : a.cycleDate > b.cycleDate ? 1 : 0
+      return a.cycleDate < b.cycleDate ? 1 : a.cycleDate > b.cycleDate ? -1 : 0
+    })
+  }, [appCycles, cycleFilter])
+
+  useEffect(() => {
+    if (applicationHighlight?.fieldKey === "submit_application") setCycleFilter("all")
+  }, [applicationHighlight])
 
   const viewApplication = (row: FlatApplicationRow) => {
     toast("View application", { description: `${grantDisplayTitle(grant)} · ${row.name}` })
@@ -1664,7 +1592,7 @@ function ApplicationCyclesPanel({
           <h2 className="font-heading text-lg font-semibold tracking-tight text-foreground">Applications</h2>
           <p className="mt-1 text-[13px] text-muted-foreground">
             {applicationCount} row{applicationCount === 1 ? "" : "s"} across {appCycles.length} cycle
-            {appCycles.length === 1 ? "" : "s"} · {money(812500)} awarded (demo). Grant titles open view; each row has Edit and View.
+            {appCycles.length === 1 ? "" : "s"} · sorted by deadline. Rows mirror My-work tasks.
           </p>
         </div>
         <div className="flex flex-wrap items-end gap-3">
@@ -1690,13 +1618,67 @@ function ApplicationCyclesPanel({
         </div>
       </div>
 
+      {applicationHighlight?.fieldKey === "submit_application" ? (() => {
+        const target = flattenApplications(appCycles, "all").find(
+          (r) => r.kind === "Proposal" && r.status === "in_progress",
+        )
+        const deadlineLabel = target ? formatSingleCycleDate(target.cycleDate) : null
+        const relLabel = target ? appDeadlineRelativeLabel(target.cycleDate) : null
+        return (
+        <div
+          className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-200/80 bg-amber-50/90 px-4 py-3 text-sm text-amber-950 dark:border-amber-900/50 dark:bg-amber-950/35 dark:text-amber-50"
+          role="status"
+        >
+          <p className="flex min-w-0 flex-1 items-start gap-2.5 leading-snug">
+            <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400" aria-hidden />
+            <span>
+              <span className="font-semibold">Due soon</span>
+              <span className="text-amber-900/90 dark:text-amber-100/90">
+                {" "}
+                — Full proposal deadline
+                {deadlineLabel ? (
+                  <>
+                    {" "}
+                    is <strong className="font-semibold">{deadlineLabel}</strong>
+                    {relLabel ? <> ({relLabel.toLowerCase()})</> : null}
+                  </>
+                ) : (
+                  <> is near</>
+                )}
+                . Record the submission date and upload your final proposal.
+              </span>
+            </span>
+          </p>
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              size="sm"
+              className="h-8 gap-1.5 px-3 text-[12.5px] font-medium"
+              onClick={() => setUploadDialogOpen(true)}
+            >
+              <Upload className="size-3.5 shrink-0" aria-hidden />
+              Upload proposal
+            </Button>
+            <button
+              type="button"
+              onClick={() => onDismissApplicationHighlight?.()}
+              className="shrink-0 rounded-md p-1 text-amber-800/70 hover:bg-amber-100/80 hover:text-amber-950 dark:text-amber-200/80 dark:hover:bg-amber-900/50 dark:hover:text-amber-50"
+              aria-label="Dismiss"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+        )
+      })() : null}
+
       <div className="overflow-hidden rounded-xl border border-border/60 bg-card">
         <Table containerClassName="p-0 sm:p-0" className="text-[12px] leading-snug [&_th]:h-9 [&_th]:py-2 [&_th]:text-[11px] [&_td]:py-2">
           <TableHeader>
             <TableRow className="hover:bg-transparent">
               <TableHead className="pl-4 font-medium uppercase tracking-wide text-muted-foreground">Grant</TableHead>
               <TableHead className="font-medium uppercase tracking-wide text-muted-foreground">LOI or proposal</TableHead>
-              <TableHead className="font-medium uppercase tracking-wide text-muted-foreground">Cycle date</TableHead>
+              <TableHead className="font-medium uppercase tracking-wide text-muted-foreground">Deadline</TableHead>
               <TableHead className="font-medium uppercase tracking-wide text-muted-foreground">Submission date</TableHead>
               <TableHead className="font-medium uppercase tracking-wide text-muted-foreground">Status</TableHead>
               <TableHead className="font-medium uppercase tracking-wide text-muted-foreground">Owner</TableHead>
@@ -1734,7 +1716,28 @@ function ApplicationCyclesPanel({
                       </button>
                     </TableCell>
                     <TableCell className="text-muted-foreground">{row.kind}</TableCell>
-                    <TableCell className="tabular-nums text-muted-foreground">{formatSingleCycleDate(row.cycleDate)}</TableCell>
+                    <TableCell className="tabular-nums">
+                      {(() => {
+                        const tone: DeadlineUrgency = row.status === "submitted" ? "normal" : deadlineUrgency(row.cycleDate)
+                        const rel = row.status === "submitted" ? null : appDeadlineRelativeLabel(row.cycleDate)
+                        if (tone === "overdue" || tone === "urgent") {
+                          return (
+                            <span
+                              className={cn(
+                                "inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-2 py-0.5 text-[11.5px] font-medium",
+                                DEADLINE_PILL_TONE[tone],
+                              )}
+                              title={rel ?? undefined}
+                            >
+                              <span className={cn("size-1.5 shrink-0 rounded-full", DEADLINE_DOT_TONE[tone])} aria-hidden />
+                              {formatSingleCycleDate(row.cycleDate)}
+                              {rel ? <span className="font-normal opacity-80">· {rel}</span> : null}
+                            </span>
+                          )
+                        }
+                        return <span className="text-muted-foreground">{formatSingleCycleDate(row.cycleDate)}</span>
+                      })()}
+                    </TableCell>
                     <TableCell className="tabular-nums text-muted-foreground">{row.submissionDate}</TableCell>
                     <TableCell>
                       <span className="inline-flex items-center gap-1.5 text-[12px] text-foreground">
@@ -1812,6 +1815,16 @@ function ApplicationCyclesPanel({
           </TableBody>
         </Table>
       </div>
+
+      <UploadApplicationDialog
+        open={uploadDialogOpen}
+        onOpenChange={(open) => {
+          setUploadDialogOpen(open)
+          if (!open) onDismissApplicationHighlight?.()
+        }}
+        grantId={grant.id}
+        grantTitle={grantDisplayTitle(grant)}
+      />
 
       <Dialog
         open={editOpen}
@@ -2157,6 +2170,7 @@ export function GrantDetailsPage({
 }) {
   const grant = grants.find((g) => g.id === grantId) || grants[0]
   const owner = team.find((t) => t.id === grant.ownerId) || team[0]
+  const { appCycles, setAppCycles } = useApplicationCyclesForGrant(grantId, grant.ownerId)
   const [mainTab, setMainTab] = useState<MainTab>("overview")
   const [oppTab, setOppTab] = useState<OppTab>("overview")
   const [ownerId, setOwnerId] = useState(grant.ownerId)
@@ -2214,14 +2228,12 @@ export function GrantDetailsPage({
   const [docQuery, setDocQuery] = useState("")
   const [grantStage, setGrantStage] = useState<Stage>(grant.stage)
   const [docPreviewFile, setDocPreviewFile] = useState<DocItem | null>(null)
-  const [appCycles, setAppCycles] = useState<AppCycle[]>(() =>
-    seedAppCycles(grants.find((g) => g.id === grantId)?.ownerId ?? grants[0].ownerId),
-  )
-
   const grantDisplayName = useMemo(() => grantDisplayTitle(grant), [grant.title, grant.funder])
-  /** While drafting LOI / application, keep lifecycle status control compact (period still on Financials / export). */
-  const hidePeriodInLifecycleStatusTrigger =
-    grantStage === "Application In Progress" || grantStage === "LOI In Progress"
+  const activeHighlight = issueHighlight ?? null
+
+  const dismissActiveHighlight = () => {
+    onDismissHighlight?.()
+  }
 
   const lifecycleBucket = useMemo(() => grantLifecycleBucket(grantStage), [grantStage])
 
@@ -2560,17 +2572,12 @@ export function GrantDetailsPage({
     setActivityComposer("")
   }
 
-  const hk = issueHighlight?.fieldKey
+  const hk = activeHighlight?.fieldKey
 
   useLayoutEffect(() => {
     setGrantStage(grant.stage)
     setOwnerId(grant.ownerId)
   }, [grantId, grant.stage, grant.ownerId])
-
-  useEffect(() => {
-    const g = grants.find((x) => x.id === grantId) || grants[0]
-    setAppCycles(seedAppCycles(g.ownerId))
-  }, [grantId])
 
   useEffect(() => {
     const bucket = grantLifecycleBucket(grantStage)
@@ -2589,14 +2596,15 @@ export function GrantDetailsPage({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [grantStage, grantId])
 
-  useEffect(() => {
-    if (!issueHighlight) return
-    const k = issueHighlight.fieldKey
+  /** Run before paint so Take action from My work lands on the right tab immediately (not a flash of Overview). */
+  useLayoutEffect(() => {
+    if (!activeHighlight) return
+    const k = activeHighlight.fieldKey
     if (k === "budget_spend") setMainTab("financials")
-    else if (k === "logic_model" || k === "full_application") setMainTab("applications")
+    else if (k === "logic_model" || k === "full_application" || k === "submit_application") setMainTab("applications")
     else if (k === "grant_documents") setMainTab("documents")
     else setMainTab("overview")
-  }, [issueHighlight])
+  }, [activeHighlight])
 
   useEffect(() => {
     if (!hk) return
@@ -2748,25 +2756,23 @@ export function GrantDetailsPage({
   return (
     <KpiChartMotionProvider>
     <div className="mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6">
-      {issueHighlight ? (
+      {activeHighlight && activeHighlight.fieldKey !== "submit_application" ? (
         <div
           className="flex flex-wrap items-start justify-between gap-3 rounded-lg border border-primary/25 bg-primary/[0.06] px-4 py-3 text-sm text-foreground"
           role="status"
         >
           <p className="min-w-0 leading-snug">
-            <span className="font-semibold">Highlighted: {issueHighlight.fieldLabel}</span>
-            <span className="text-muted-foreground"> — {issueHighlight.reason}</span>
+            <span className="font-semibold">Highlighted: {activeHighlight.fieldLabel}</span>
+            <span className="text-muted-foreground"> — {activeHighlight.reason}</span>
           </p>
-          {onDismissHighlight ? (
-            <button
-              type="button"
-              onClick={onDismissHighlight}
-              className="shrink-0 rounded-md p-1 text-muted-foreground hover:bg-background/80 hover:text-foreground"
-              aria-label="Dismiss highlight"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          ) : null}
+          <button
+            type="button"
+            onClick={dismissActiveHighlight}
+            className="shrink-0 rounded-md p-1 text-muted-foreground hover:bg-background/80 hover:text-foreground"
+            aria-label="Dismiss highlight"
+          >
+            <X className="h-4 w-4" />
+          </button>
         </div>
       ) : null}
 
@@ -2800,11 +2806,6 @@ export function GrantDetailsPage({
                 className="h-9 max-w-[min(100%,20rem)] gap-2 rounded-lg border-border/60 bg-background px-2.5 font-medium shadow-none hover:bg-muted/60 dark:hover:bg-muted/40"
               >
                 <StagePill stage={grantStage} audience="internal" className="max-w-[11rem] shrink truncate text-[10px]" />
-                {grant.period && !hidePeriodInLifecycleStatusTrigger ? (
-                  <span className="hidden min-w-0 truncate text-[11px] font-normal text-muted-foreground sm:inline">
-                    {grant.period}
-                  </span>
-                ) : null}
                 <ChevronDown className="ml-auto size-3.5 shrink-0 text-muted-foreground" />
               </Button>
             </DropdownMenuTrigger>
@@ -2990,7 +2991,6 @@ export function GrantDetailsPage({
       {mainTab === "overview" ? (
         <div className="grid gap-10 lg:grid-cols-[minmax(0,1fr)_minmax(300px,360px)] lg:items-start">
           <div className="flex min-w-0 flex-col gap-14 sm:gap-16">
-            {/* Workflows */}
             <section>
               <div className="mb-4 flex items-baseline justify-between gap-3">
                 <div>
@@ -3050,9 +3050,7 @@ export function GrantDetailsPage({
             <section>
               <div className="mb-4 flex items-baseline justify-between gap-3">
                 <div>
-                  <h2 className="font-heading text-base font-semibold tracking-tight text-foreground">
-                    {lifecycleBucket === "prospecting" ? "Prospecting work" : lifecycleBucket === "terminal" ? "Closeout & wrap-up" : "Upcoming work"}
-                  </h2>
+                  <h2 className="font-heading text-base font-semibold tracking-tight text-foreground">Tasks</h2>
                   <p className="mt-1 text-[13px] text-muted-foreground">
                     {tasks.filter((t) => !taskDone[t.id]).length} open · {tasks.filter((t) => t.tag).length} flagged
                     {lifecycleBucket === "prospecting" ? " · no award financials yet" : null}
@@ -3581,7 +3579,16 @@ export function GrantDetailsPage({
 
       {mainTab === "applications" ? (
         <div id="highlight-full_application">
-          <ApplicationCyclesPanel appCycles={appCycles} setAppCycles={setAppCycles} ownerId={ownerId} grant={grant} />
+          <div id="highlight-submit_application">
+            <ApplicationCyclesPanel
+              appCycles={appCycles}
+              setAppCycles={setAppCycles}
+              ownerId={ownerId}
+              grant={grant}
+              applicationHighlight={activeHighlight?.fieldKey === "submit_application" ? activeHighlight : null}
+              onDismissApplicationHighlight={dismissActiveHighlight}
+            />
+          </div>
         </div>
       ) : null}
 

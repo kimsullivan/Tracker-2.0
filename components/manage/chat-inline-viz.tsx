@@ -2,8 +2,24 @@
 
 import { useId } from "react"
 import { Activity, CircleDot, Download, FileSpreadsheet, FileText, Scale, Zap, type LucideIcon } from "lucide-react"
-import { Area, AreaChart, ResponsiveContainer, XAxis, YAxis } from "recharts"
-import { KPI_CHART_ANIMATION_DURATION_MS, KPI_CHART_ANIMATION_EASING, useKpiChartMotion } from "@/components/manage/all-grants-kpi-tiles"
+import {
+  Area,
+  AreaChart,
+  CartesianGrid,
+  ComposedChart,
+  Line,
+  ReferenceLine,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts"
+import {
+  KPI_CHART_ANIMATION_DURATION_MS,
+  KPI_CHART_ANIMATION_EASING,
+  KPI_CHART_FONT,
+  useKpiChartMotion,
+} from "@/components/manage/all-grants-kpi-tiles"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Source, SourceContent, SourceTrigger } from "@/components/prompt-kit/source"
@@ -18,6 +34,21 @@ export type ChatVizSparkline = {
   kind: "sparkline"
   title: string
   series: { x: string; y: number }[]
+}
+
+/** Spend-pace chart mirroring the grant Opportunity tab treatment — composed Area
+ *  ("Actual" cumulative spend) + Line ("Expected" linear pace), with grid, axes,
+ *  $K formatting, and a "Now" vertical marker. */
+export type ChatVizSpendPace = {
+  kind: "spend_pace"
+  title: string
+  subtitle?: string
+  /** Monthly cumulative series. `actual` is `null` for future months. */
+  series: { month: string; expected: number; actual: number | null }[]
+  /** Optional label of the "now" tick; draws a vertical reference. */
+  nowLabel?: string
+  /** Y-axis unit suffix (default "K"). */
+  yUnit?: "K" | "M"
 }
 
 export type ChatVizMetrics = {
@@ -63,6 +94,7 @@ export type ChatVizReportBundle = {
 
 export type ChatViz =
   | ChatVizSparkline
+  | ChatVizSpendPace
   | ChatVizMetrics
   | ChatVizTasks
   | ChatVizInlineActions
@@ -515,6 +547,152 @@ export function ChatInlineViz({
             </div>
             )
           })}
+        </div>
+      </div>
+    )
+  }
+
+  if (viz.kind === "spend_pace") {
+    const unit = viz.yUnit ?? "K"
+    const finalActual = [...viz.series].reverse().find((p) => p.actual !== null)?.actual ?? null
+    const finalExpected = viz.series.at(-1)?.expected ?? null
+    const variance =
+      finalActual !== null && finalExpected !== null ? finalActual - finalExpected : null
+    return (
+      <div
+        className={cn(
+          "rounded-xl border border-border/55 bg-card/90 p-3 shadow-xs",
+          "animate-in fade-in zoom-in-95 slide-in-from-bottom-2 fill-mode-both duration-500",
+        )}
+        style={{ animationDelay: `${staggerMs}ms` }}
+      >
+        <div className="flex items-baseline justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              {viz.title}
+            </p>
+            {viz.subtitle ? (
+              <p className="mt-0.5 text-[12px] leading-snug text-muted-foreground/90">
+                {viz.subtitle}
+              </p>
+            ) : null}
+          </div>
+          {variance !== null ? (
+            <div className="text-right">
+              <div
+                className={cn(
+                  "font-heading text-[15px] font-bold tabular-nums leading-none",
+                  variance < 0 ? "text-amber-700 dark:text-amber-300" : "text-emerald-700 dark:text-emerald-300",
+                )}
+              >
+                {variance < 0 ? "−" : "+"}${Math.abs(variance)}
+                {unit}
+              </div>
+              <div className="mt-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+                {variance < 0 ? "Behind plan" : "Ahead of plan"}
+              </div>
+            </div>
+          ) : null}
+        </div>
+        <div className="mt-2 flex items-center gap-3 text-[10.5px] text-muted-foreground">
+          <span className="inline-flex items-center gap-1.5">
+            <span
+              className="inline-block h-2 w-2 rounded-full"
+              style={{ background: "var(--chart-3)" }}
+              aria-hidden
+            />
+            Actual cumulative spend
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <span
+              className="inline-block h-[2px] w-3 rounded-full bg-muted-foreground/70"
+              aria-hidden
+            />
+            Expected pace
+          </span>
+        </div>
+        <div
+          className="mt-2 h-[180px] w-full [&_.recharts-surface]:outline-none"
+          style={{ fontFamily: KPI_CHART_FONT }}
+        >
+          <ResponsiveContainer width="100%" height="100%">
+            <ComposedChart data={viz.series} margin={{ top: 6, right: 8, left: 0, bottom: 4 }}>
+              <defs>
+                <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="var(--chart-3)" stopOpacity={0.35} />
+                  <stop offset="100%" stopColor="var(--chart-3)" stopOpacity={0.02} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" opacity={0.85} />
+              <XAxis
+                dataKey="month"
+                tickLine={false}
+                axisLine={false}
+                tick={{ fontSize: 10, fill: "var(--muted-foreground)" }}
+                interval="preserveStartEnd"
+              />
+              <YAxis
+                width={40}
+                tickLine={false}
+                axisLine={false}
+                tick={{ fontSize: 10, fill: "var(--muted-foreground)" }}
+                tickFormatter={(v) => `$${v}${unit}`}
+                domain={[0, "auto"]}
+              />
+              <Tooltip
+                contentStyle={{
+                  fontFamily: KPI_CHART_FONT,
+                  fontSize: 11,
+                  borderRadius: 8,
+                  borderColor: "var(--border)",
+                  background: "var(--card)",
+                  padding: "6px 8px",
+                }}
+                formatter={(value: number | string, name: string) => {
+                  if (value === null || value === undefined) return ["—", name]
+                  return [`$${value}${unit}`, name === "actual" ? "Actual" : "Expected"]
+                }}
+                labelFormatter={(m) => `${m}`}
+              />
+              {viz.nowLabel ? (
+                <ReferenceLine
+                  x={viz.nowLabel}
+                  stroke="var(--muted-foreground)"
+                  strokeOpacity={0.55}
+                  strokeDasharray="2 3"
+                  label={{
+                    value: "Now",
+                    position: "insideTopRight",
+                    fontSize: 10,
+                    fill: "var(--muted-foreground)",
+                  }}
+                />
+              ) : null}
+              <Area
+                type="monotone"
+                dataKey="actual"
+                stroke="var(--chart-3)"
+                strokeWidth={2}
+                fill={`url(#${gradId})`}
+                connectNulls={false}
+                isAnimationActive={!reducedMotion && chartReady}
+                animationDuration={reducedMotion ? 0 : KPI_CHART_ANIMATION_DURATION_MS}
+                animationEasing={KPI_CHART_ANIMATION_EASING}
+              />
+              <Line
+                type="monotone"
+                dataKey="expected"
+                stroke="var(--muted-foreground)"
+                strokeOpacity={0.75}
+                strokeWidth={1.5}
+                strokeDasharray="4 3"
+                dot={false}
+                isAnimationActive={!reducedMotion && chartReady}
+                animationDuration={reducedMotion ? 0 : KPI_CHART_ANIMATION_DURATION_MS}
+                animationEasing={KPI_CHART_ANIMATION_EASING}
+              />
+            </ComposedChart>
+          </ResponsiveContainer>
         </div>
       </div>
     )

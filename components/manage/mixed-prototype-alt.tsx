@@ -22,6 +22,7 @@ import { grants } from "@/lib/manage/data"
 import { grantDisplayTitle } from "@/lib/manage/grant-context"
 import { ManagePrototypeSidebar } from "@/components/sidebar/manage-prototype-sidebar"
 import { MixAltUiProvider } from "@/components/manage/mix-alt-ui-context"
+import { ApplicationCyclesDemoProvider } from "@/components/manage/application-cycles-demo-context"
 import {
   getMixAltSuggestions,
   isEffectiveUpcoming,
@@ -259,8 +260,19 @@ export function MixedPrototypeAlt() {
       if (!href.startsWith("mixalt://")) return false
       const rest = href.slice("mixalt://".length)
       if (rest.startsWith("grant/")) {
-        const grantId = decodeURIComponent(rest.slice("grant/".length))
-        openGrant(grantId)
+        const tail = rest.slice("grant/".length)
+        const [rawId, ...tabParts] = tail.split("/")
+        const grantId = decodeURIComponent(rawId)
+        const tab = tabParts[0]
+        if (tab === "financials") {
+          openGrant(grantId, {
+            fieldKey: "budget_spend",
+            fieldLabel: "Spenddown pace",
+            reason: "Tracking ~$25K below plan — review burn vs. expected.",
+          })
+        } else {
+          openGrant(grantId)
+        }
         return true
       }
       if (rest.startsWith("toast/")) {
@@ -325,6 +337,7 @@ export function MixedPrototypeAlt() {
   }, [])
 
   return (
+    <ApplicationCyclesDemoProvider>
     <div
       className={cn(
         "shadow-bleed-scroll flex min-h-screen min-h-0 w-full flex-1 flex-row bg-white max-w-[100vw]",
@@ -539,5 +552,6 @@ export function MixedPrototypeAlt() {
       </div>
       </MixAltUiProvider>
     </div>
+    </ApplicationCyclesDemoProvider>
   )
 }

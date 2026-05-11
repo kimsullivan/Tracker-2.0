@@ -18,6 +18,7 @@ import {
   ChevronDown,
   TrendingDown,
   TrendingUp,
+  Upload,
 } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 import { toast } from "sonner"
@@ -41,6 +42,10 @@ import type { Grant } from "@/lib/manage/types"
 import { PulseStripBridgeRecharts } from "./all-grants-kpi-tiles"
 import { useMixAltUi } from "@/components/manage/mix-alt-ui-context"
 import { countEffectiveUpcoming } from "@/components/manage/mix-alt-agent"
+import {
+  UploadApplicationDialog,
+  useApplicationCyclesDemoOptional,
+} from "@/components/manage/application-cycles-demo-context"
 
 const MIXALT_EMPTY_SNOOZE_IDS = new Set<string>()
 
@@ -563,6 +568,8 @@ const HYGIENE_ISSUE_CATEGORIES = new Set<WorkIssueCategory>(["missing_data", "se
 
 function myWorkSection(item: ActionItem): "today" | "decisions" | "week" {
   if (item.issueCategory === "overdue" || item.daysOut <= 0) return "today"
+  if (item.issueKind === "deadline" && item.issueCategory === "upcoming" && item.daysOut > 0 && item.daysOut <= 7)
+    return "today"
   if (item.issueCategory === "setup" || item.issueCategory === "spend") return "decisions"
   if (item.issueCategory === "missing_data" && item.highlightFieldKey === "owner") return "decisions"
   if (item.issueCategory === "inactive" && item.daysOut > 0 && item.daysOut <= 7) return "decisions"
@@ -903,6 +910,96 @@ function ActionQueueInner({
   )
 }
 
+function SimpleTaskListRow({
+  item,
+  toggle,
+  onOpenGrant,
+}: {
+  item: ActionItem
+  toggle: (id: string) => void
+  onOpenGrant: (id: string, ctx?: IssueNavigationContext) => void
+}) {
+  const appDemo = useApplicationCyclesDemoOptional()
+  const isSubmitApplication = item.highlightFieldKey === "submit_application" && Boolean(appDemo)
+  const [uploadOpen, setUploadOpen] = useState(false)
+  const issueCtx = (): IssueNavigationContext => ({
+    fieldKey: item.highlightFieldKey,
+    fieldLabel: item.highlightFieldLabel,
+    reason: item.highlightReason,
+  })
+
+  return (
+    <li className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-start sm:gap-4 sm:px-6">
+      <div className="flex shrink-0 gap-3 sm:pt-0.5">
+        <button
+          type="button"
+          onClick={() => toggle(item.id)}
+          className={[
+            "flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors",
+            item.done ? "border-chart-3 bg-chart-3 text-white" : "border-input hover:border-foreground",
+          ].join(" ")}
+          aria-label={item.done ? "Mark not done" : "Mark done"}
+        >
+          {item.done && <Check className="h-3 w-3" strokeWidth={3} />}
+        </button>
+      </div>
+      <div className="min-w-0 flex-1 space-y-1">
+        <div>
+          <span className="font-semibold text-foreground">{item.itemLabel}</span>
+          <p className="mt-0.5 text-muted-foreground">{item.detail}</p>
+        </div>
+        <button
+          type="button"
+          onClick={() => onOpenGrant(item.grantId, issueCtx())}
+          className="text-left text-sm font-medium text-primary hover:underline"
+        >
+          {item.grantTitle}
+        </button>
+      </div>
+      <div className="flex shrink-0 flex-row items-center gap-2 sm:flex-col sm:items-end">
+        <OwnerAvatar id={item.ownerId} size={22} />
+        <div className="inline-flex h-7 max-w-[14rem] shrink-0 overflow-hidden rounded-md border border-border bg-background text-[11px]">
+          <button
+            type="button"
+            onClick={() => onOpenGrant(item.grantId, issueCtx())}
+            className="inline-flex min-w-0 items-center truncate px-2 font-medium text-foreground hover:bg-muted"
+          >
+            {item.ctaLabel}
+          </button>
+          {isSubmitApplication ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  aria-label="More actions"
+                  onClick={(e) => e.stopPropagation()}
+                  className="inline-flex shrink-0 items-center justify-center border-l border-border px-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                >
+                  <ChevronDown className="size-3.5" aria-hidden />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-44">
+                <DropdownMenuItem onSelect={() => setUploadOpen(true)}>
+                  <Upload className="mr-2 size-3.5" aria-hidden />
+                  Upload proposal
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : null}
+        </div>
+      </div>
+      {isSubmitApplication ? (
+        <UploadApplicationDialog
+          open={uploadOpen}
+          onOpenChange={setUploadOpen}
+          grantId={item.grantId}
+          grantTitle={item.grantTitle}
+        />
+      ) : null}
+    </li>
+  )
+}
+
 function SimpleTaskList({
   sortedVisible,
   toggle,
@@ -915,62 +1012,12 @@ function SimpleTaskList({
   return (
     <ul className="divide-y divide-border">
       {sortedVisible.map((item) => (
-        <li
+        <SimpleTaskListRow
           key={item.id}
-          className={cn(
-            "flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-start sm:gap-4 sm:px-6",
-            item.done && "opacity-50",
-          )}
-        >
-          <div className="flex shrink-0 gap-3 sm:pt-0.5">
-            <button
-              type="button"
-              onClick={() => toggle(item.id)}
-              className={[
-                "flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors",
-                item.done ? "border-chart-3 bg-chart-3 text-white" : "border-input hover:border-foreground",
-              ].join(" ")}
-              aria-label={item.done ? "Mark not done" : "Mark done"}
-            >
-              {item.done && <Check className="h-3 w-3" strokeWidth={3} />}
-            </button>
-          </div>
-          <div className="min-w-0 flex-1 space-y-1">
-            <div className={cn(item.done && "line-through")}>
-              <span className="font-semibold text-foreground">{item.itemLabel}</span>
-              <p className="mt-0.5 text-muted-foreground">{item.detail}</p>
-            </div>
-            <button
-              type="button"
-              onClick={() =>
-                onOpenGrant(item.grantId, {
-                  fieldKey: item.highlightFieldKey,
-                  fieldLabel: item.highlightFieldLabel,
-                  reason: item.highlightReason,
-                })
-              }
-              className="text-left text-sm font-medium text-primary hover:underline"
-            >
-              {item.grantTitle}
-            </button>
-          </div>
-          <div className="flex shrink-0 flex-row items-center gap-3 sm:flex-col sm:items-end">
-            <OwnerAvatar id={item.ownerId} size={22} />
-            <button
-              type="button"
-              onClick={() =>
-                onOpenGrant(item.grantId, {
-                  fieldKey: item.highlightFieldKey,
-                  fieldLabel: item.highlightFieldLabel,
-                  reason: item.highlightReason,
-                })
-              }
-              className="inline-flex h-7 max-w-[11rem] truncate items-center rounded-md border border-border bg-background px-2 text-[11px] font-medium text-foreground hover:bg-muted"
-            >
-              {item.ctaLabel}
-            </button>
-          </div>
-        </li>
+          item={item}
+          toggle={toggle}
+          onOpenGrant={onOpenGrant}
+        />
       ))}
     </ul>
   )
@@ -1011,7 +1058,7 @@ function OperatorTaskTable({
       buckets[myWorkSection(item)].push(item)
     }
     const out: { id: string; title: string; rows: ActionItem[] }[] = []
-    if (buckets.today.length) out.push({ id: "today", title: "Today", rows: buckets.today })
+    if (buckets.today.length) out.push({ id: "today", title: "Due today", rows: buckets.today })
     if (buckets.decisions.length)
       out.push({ id: "decisions", title: "Decisions worth making", rows: buckets.decisions })
     if (buckets.week.length) out.push({ id: "week", title: "This week", rows: buckets.week })
@@ -1073,6 +1120,9 @@ function OperatorWorkListRow({
   const snoozedIds = mix?.snoozedIssueIds ?? MIXALT_EMPTY_SNOOZE_IDS
   const rowSnoozed = Boolean(item.snoozed || snoozedIds.has(item.id))
   const snoozeDisabled = rowSnoozed
+  const appDemo = useApplicationCyclesDemoOptional()
+  const isSubmitApplication = item.highlightFieldKey === "submit_application" && Boolean(appDemo)
+  const [uploadOpen, setUploadOpen] = useState(false)
 
   return (
     <div
@@ -1080,8 +1130,6 @@ function OperatorWorkListRow({
         "group grid w-full items-center gap-x-6 gap-y-3 border-t border-elevated-stroke px-4 py-3 text-left text-xs leading-normal transition-colors first:border-t-0 hover:bg-muted/30 dark:border-t-border",
         "max-[760px]:grid-cols-[minmax(0,1fr)_minmax(10.5rem,13rem)]",
         "min-[761px]:grid-cols-[minmax(0,30rem)_minmax(176px,248px)_minmax(0,1fr)_140px_112px_minmax(176px,max-content)]",
-        item.done && "opacity-50",
-        rowSnoozed && "opacity-60",
       )}
     >
       <div className="min-w-0 max-w-[30rem] max-[760px]:max-w-none max-[760px]:col-start-1 max-[760px]:row-start-1 min-[761px]:col-start-1 min-[761px]:row-start-1">
@@ -1187,6 +1235,15 @@ function OperatorWorkListRow({
             onClick={(e) => e.stopPropagation()}
             onPointerDown={(e) => e.stopPropagation()}
           >
+            {isSubmitApplication ? (
+              <>
+                <DropdownMenuItem onSelect={() => setUploadOpen(true)}>
+                  <Upload className="mr-2 size-3.5" aria-hidden />
+                  Upload proposal
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+              </>
+            ) : null}
             <DropdownMenuItem disabled={item.done} onSelect={() => onMarkOk()}>
               Mark as OK
             </DropdownMenuItem>
@@ -1211,6 +1268,15 @@ function OperatorWorkListRow({
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+
+      {isSubmitApplication ? (
+        <UploadApplicationDialog
+          open={uploadOpen}
+          onOpenChange={setUploadOpen}
+          grantId={item.grantId}
+          grantTitle={item.grantTitle}
+        />
+      ) : null}
     </div>
   )
 }

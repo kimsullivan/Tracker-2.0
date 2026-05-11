@@ -551,7 +551,7 @@ export const ChatPanelStandalone = forwardRef<ChatPanelStandaloneHandle, ChatPan
               markdown: false,
               at: Date.now(),
               body:
-                "Cumulative spend vs expected pace (prototype). Metrics reflect the underspend scenario; lines show modeled burn as a percentage of the award.",
+                "Cumulative spend vs. linear pace (prototype). Filled area is actual draw-down; dashed line is expected burn against the $185K award.",
               viz: mixAltUnderspendSpendCharts(),
             },
           ])
@@ -629,6 +629,23 @@ export const ChatPanelStandalone = forwardRef<ChatPanelStandaloneHandle, ChatPan
               viz: scripted.viz,
             }
             setMessages((prev) => [...prev, agentMsg])
+            if (scripted.followUps?.length) {
+              scripted.followUps.forEach((fu, idx) => {
+                const handle = window.setTimeout(() => {
+                  const followMsg: AgentMessage = {
+                    id: `a-${Date.now()}-fu-${idx}`,
+                    role: "agent",
+                    markdown: fu.markdown ?? agentMd,
+                    at: Date.now(),
+                    body: fu.agentBody,
+                    sources: fu.sources,
+                    viz: fu.viz,
+                  }
+                  setMessages((prev) => [...prev, followMsg])
+                }, Math.max(0, fu.delayMs))
+                thinkingTimeoutsRef.current.push(handle)
+              })
+            }
           } else if (scriptedFallbackOnly && fallbackBody !== undefined) {
             const agentMsg: AgentMessage = {
               id: `a-${Date.now()}`,
@@ -650,6 +667,23 @@ export const ChatPanelStandalone = forwardRef<ChatPanelStandaloneHandle, ChatPan
               viz: reply.viz,
             }
             setMessages((prev) => [...prev, agentMsg])
+            if (reply.followUps?.length) {
+              reply.followUps.forEach((fu, idx) => {
+                const handle = window.setTimeout(() => {
+                  const followMsg: AgentMessage = {
+                    id: `a-${Date.now()}-fu-${idx}`,
+                    role: "agent",
+                    markdown: fu.markdown ?? true,
+                    at: Date.now(),
+                    body: fu.body,
+                    sources: fu.sources,
+                    viz: fu.viz,
+                  }
+                  setMessages((prev) => [...prev, followMsg])
+                }, Math.max(0, fu.delayMs))
+                thinkingTimeoutsRef.current.push(handle)
+              })
+            }
           }
           setThinkingPhase("idle")
         }, THINKING_EXIT_MS)
@@ -865,7 +899,9 @@ function AgentMessageTurn({
       {m.viz?.length ? (
         (() => {
           const inlineActionBlocks = m.viz.filter((b) => b.kind === "inline_actions")
-          const kpiBlocks = m.viz.filter((b) => b.kind === "metrics" || b.kind === "sparkline")
+          const kpiBlocks = m.viz.filter(
+            (b) => b.kind === "metrics" || b.kind === "sparkline" || b.kind === "spend_pace",
+          )
           const taskBlocks = m.viz.filter((b) => b.kind === "tasks")
           const reportBlocks = m.viz.filter((b) => b.kind === "report_asset" || b.kind === "report_bundle")
           if (panelVariant === "operator") {
@@ -1011,6 +1047,14 @@ function taskFollowThrough(action: ChatTaskAction): {
   }
 }
 
+type BuildAgentReplyFollowUp = {
+  delayMs: number
+  body: string
+  markdown?: boolean
+  viz?: ChatViz[]
+  sources?: ChatSource[]
+}
+
 function buildAgentReply(
   userText: string,
   contextLabel: string,
@@ -1018,6 +1062,7 @@ function buildAgentReply(
   body: string
   sources: ChatSource[]
   viz?: ChatViz[]
+  followUps?: BuildAgentReplyFollowUp[]
 } {
   const t = userText.toLowerCase()
 
@@ -1231,8 +1276,8 @@ function buildAgentReply(
     const racineNamed = t.includes("racine")
     return {
       body: racineNamed
-        ? `**Racine Community Foundation** is flagged because spend is behind expected pace for this stage of the grant: **40%** of the budget used with **80%** of the period elapsed. We flag underspend when usage is more than **20 percentage points** behind a linear pace. The metrics below show the spenddown picture as a share of the award.`
-        : `This grant is flagged because spend is behind expected pace: **40%** of the budget used with **80%** of the period elapsed. We flag underspend when usage is more than **20 percentage points** behind linear pace — see metrics below.`,
+        ? `**Racine Community Foundation** is tracking well behind its spend plan. As of **May 11** (36% through a 12-month period), the team has drawn down **$42K of the $185K award** versus **~$67K expected by now** — a **~$25K gap**. That trips our underspend flag (>$20K behind plan). To finish on plan, monthly burn needs to step up from **~$9K to ~$19K** across the remaining **~7.5 months**. Spenddown snapshot below.`
+        : `This grant is tracking behind its spend plan: **$42K of $185K** drawn down with **36% of the period elapsed** — versus **~$67K expected**, a **~$25K gap** (>$20K underspend threshold). Catch-up burn needs to roughly double (~$9K → ~$19K / month) over the remaining ~7.5 months. Spenddown snapshot below.`,
       sources: racineNamed
         ? [
             {
@@ -1248,7 +1293,14 @@ function buildAgentReply(
               href: "https://www.instrumentl.com",
             },
           ],
-      viz: [...mixAltUnderspendSpendCharts(), mixAltRacineGrantFollowUp()],
+      viz: mixAltUnderspendSpendCharts(),
+      followUps: [
+        {
+          delayMs: 2600,
+          body: "Want to dig in? I can take you straight to the spenddown view on the Racine grant.",
+          viz: [mixAltRacineGrantFollowUp()],
+        },
+      ],
     }
   }
 

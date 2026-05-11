@@ -15,25 +15,31 @@ import { MixedPrototypeAlt } from "@/components/manage/mixed-prototype-alt"
 import { OPERATOR_INITIAL_MESSAGES, OPERATOR_SUGGESTIONS } from "@/components/manage/operator-initial"
 import { grants } from "@/lib/manage/data"
 import { grantDisplayTitle } from "@/lib/manage/grant-context"
+import type { IssueNavigationContext } from "@/lib/manage/types"
 import { ManagePrototypeSidebar } from "@/components/sidebar/manage-prototype-sidebar"
+import { ApplicationCyclesDemoProvider } from "@/components/manage/application-cycles-demo-context"
 
 function StaticCommandCenter() {
   const [grain, setGrain] = useState<Grain>("all-grants")
   const [activeGrantId, setActiveGrantId] = useState<string | null>(null)
+  const [issueNav, setIssueNav] = useState<IssueNavigationContext | null>(null)
 
   const grant = activeGrantId ? grants.find((g) => g.id === activeGrantId) : null
 
-  function openGrant(id: string, _ctx?: unknown) {
+  function openGrant(id: string, ctx?: IssueNavigationContext) {
     setActiveGrantId(id)
+    setIssueNav(ctx ?? null)
   }
 
   function closeGrant() {
     setActiveGrantId(null)
+    setIssueNav(null)
   }
 
   const contextLabel = grant ? grantDisplayTitle(grant) : grain === "command" ? "My work" : "All grants table"
 
   return (
+    <ApplicationCyclesDemoProvider>
     <div className="shadow-bleed-scroll flex min-h-screen w-full min-w-0 max-w-[100vw] overflow-x-hidden bg-white">
       <ManagePrototypeSidebar
         grain={grain}
@@ -64,7 +70,11 @@ function StaticCommandCenter() {
         <main className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
           {grant ? (
             <div className="shadow-bleed-scroll min-h-0 min-w-0 flex-1 overflow-auto">
-              <GrantDetailsPage grantId={grant.id} />
+              <GrantDetailsPage
+                grantId={grant.id}
+                issueHighlight={issueNav}
+                onDismissHighlight={() => setIssueNav(null)}
+              />
             </div>
           ) : grain === "command" ? (
             <div className="shadow-bleed-scroll min-h-0 min-w-0 flex-1 overflow-auto">
@@ -83,6 +93,7 @@ function StaticCommandCenter() {
         <AgentRail contextLabel={contextLabel} />
       </div>
     </div>
+    </ApplicationCyclesDemoProvider>
   )
 }
 
@@ -91,20 +102,24 @@ function OperatorAllGrants() {
   const router = useRouter()
   const [activeGrantId, setActiveGrantId] = useState<string | null>(null)
   const [operatorChatOpen, setOperatorChatOpen] = useState(true)
+  const [issueNav, setIssueNav] = useState<IssueNavigationContext | null>(null)
 
   const grant = activeGrantId ? grants.find((g) => g.id === activeGrantId) : null
 
-  function openGrant(id: string) {
+  function openGrant(id: string, ctx?: IssueNavigationContext) {
     setActiveGrantId(id)
+    setIssueNav(ctx ?? null)
   }
 
   function closeGrant() {
     setActiveGrantId(null)
+    setIssueNav(null)
   }
 
   const contextLabel = grant ? grantDisplayTitle(grant) : "All grants table"
 
   return (
+    <ApplicationCyclesDemoProvider>
     <div className="shadow-bleed-scroll flex min-h-screen w-full min-w-0 max-w-[100vw] overflow-x-hidden bg-white">
       <ManagePrototypeSidebar
         grain="all-grants"
@@ -127,7 +142,11 @@ function OperatorAllGrants() {
         <main className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
           {grant ? (
             <div className="shadow-bleed-scroll min-h-0 min-w-0 flex-1 overflow-auto">
-              <GrantDetailsPage grantId={grant.id} />
+              <GrantDetailsPage
+                grantId={grant.id}
+                issueHighlight={issueNav}
+                onDismissHighlight={() => setIssueNav(null)}
+              />
             </div>
           ) : (
             <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col gap-6 p-6 md:flex-row">
@@ -176,6 +195,7 @@ function OperatorAllGrants() {
         ) : null}
       </div>
     </div>
+    </ApplicationCyclesDemoProvider>
   )
 }
 
