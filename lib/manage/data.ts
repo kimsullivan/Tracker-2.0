@@ -1,4 +1,4 @@
-import type { Grant, TeamMember, ActionItem, Anomaly, Stage } from "./types"
+import type { Grant, TeamMember, ActionItem, Anomaly, Stage, FunderType, ProjectGroup, Priority, RenewalLikelihood } from "./types"
 
 export const team: TeamMember[] = [
   { id: "maria", name: "Maria Chen", initials: "MC", role: "Grants Manager", load: 142, color: "#5A56B3" },
@@ -21,6 +21,74 @@ export const stageOrder: Stage[] = [
   "Closed",
   "Declined",
 ]
+
+/** Synthetic rows for denser KPIs / charts in the All grants prototype (deterministic). */
+function buildExtraDemoGrants(n: number): Grant[] {
+  const stages: Stage[] = [
+    "Researching",
+    "Planned",
+    "LOI In Progress",
+    "LOI Submitted",
+    "Application In Progress",
+    "Application Submitted",
+    "Awarded - Active",
+    "Closed",
+    "Declined",
+  ]
+  const funderTypes: FunderType[] = ["Federal", "Private", "Corporate", "State", "Local"]
+  const owners = ["maria", "elizabeth", "laurie", "grace", "nina", "james"] as const
+  const groups: ProjectGroup[] = ["Health Equity", "Workforce", "General Op", "Capacity", "Research"]
+  const priorities: Priority[] = ["P0", "P1", "P2", "P3"]
+  const renewals: RenewalLikelihood[] = ["High", "Medium", "Low", "Unknown"]
+  const pad = (x: number) => String(x).padStart(2, "0")
+
+  const out: Grant[] = []
+  for (let i = 0; i < n; i++) {
+    const id = `G-2026-D${String(i + 1).padStart(4, "0")}`
+    const year = 2025 + ((i * 17) % 3)
+    const month = 1 + (i % 12)
+    const day = 1 + (i % 28)
+    const deadline = `${year}-${pad(month)}-${pad(day)}`
+    const stage = stages[i % stages.length]!
+    const funderType = funderTypes[i % funderTypes.length]!
+    const award = 45000 + ((i * 7919) % 920000)
+    const terminal = stage === "Closed" || stage === "Declined"
+    const weighted = terminal ? 0 : Math.round(award * (0.12 + (i % 7) * 0.03))
+    const base: Grant = {
+      id,
+      title: `Regional initiative ${i + 1} · ${funderType}`,
+      funder: `Community Foundation / Partner ${(i % 42) + 201}`,
+      funderType,
+      stage,
+      nextAction: "Update stage and next touch",
+      deadline,
+      daysToDeadline: ((i * 13) % 240) - 35,
+      award,
+      weighted,
+      ownerId: owners[i % owners.length]!,
+      cycle: "2026",
+      fundingSource: "Program pool",
+      lastUpdated: "recently",
+      projectGroup: groups[i % groups.length]!,
+      priority: priorities[i % priorities.length]!,
+      renewalLikelihood: renewals[i % renewals.length]!,
+      programSummary:
+        "Synthetic portfolio row for prototype density — deadlines, stages, and funder types vary for KPI and pulse views.",
+    }
+    if (funderType === "Federal" && i % 3 === 0) {
+      base.cfda = `93.${210 + (i % 80)}`
+      base.period = "09/30/26 — 09/29/29"
+      base.matchRequired = i % 2 === 0
+    }
+    if (i % 19 === 0) base.flagged = true
+    if (i % 31 === 0) {
+      base.blocked = true
+      base.blockedReason = "Awaiting internal budget sign-off (demo)"
+    }
+    out.push(base)
+  }
+  return out
+}
 
 export const grants: Grant[] = [
   {
@@ -832,6 +900,104 @@ export const grants: Grant[] = [
     priority: "P2",
     renewalLikelihood: "Unknown",
   },
+  // Closed rows with older deadlines — same `funder` strings as live portfolio grants so the Funder
+  // portfolio KPI “Returning” count (first calendar year in corpus vs anchor year) stays realistic.
+  {
+    id: "G-HIST-HRSA-LEG",
+    title: "Rural clinic capacity · closed out",
+    funder: "HHS / HRSA",
+    funderType: "Federal",
+    stage: "Closed",
+    nextAction: "Archive",
+    deadline: "2023-08-15",
+    daysToDeadline: -600,
+    award: 220000,
+    weighted: 0,
+    ownerId: "maria",
+    cycle: "2020",
+    fundingSource: "HRSA-20-legacy",
+    lastUpdated: "archived",
+    projectGroup: "Health Equity",
+    priority: "P3",
+    renewalLikelihood: "Unknown",
+  },
+  {
+    id: "G-HIST-CALEND-LEG",
+    title: "Building Healthy Communities · prior cycle",
+    funder: "California Endowment",
+    funderType: "Private",
+    stage: "Closed",
+    nextAction: "Archive",
+    deadline: "2022-11-30",
+    daysToDeadline: -900,
+    award: 125000,
+    weighted: 0,
+    ownerId: "grace",
+    cycle: "2021",
+    fundingSource: "BHC cohort (ended)",
+    lastUpdated: "archived",
+    projectGroup: "Health Equity",
+    priority: "P3",
+    renewalLikelihood: "Unknown",
+  },
+  {
+    id: "G-HIST-DOL-LEG",
+    title: "WIOA pilot · completed",
+    funder: "Department of Labor",
+    funderType: "Federal",
+    stage: "Closed",
+    nextAction: "Archive",
+    deadline: "2021-04-30",
+    daysToDeadline: -1200,
+    award: 310000,
+    weighted: 0,
+    ownerId: "james",
+    cycle: "2019",
+    fundingSource: "WIOA (closed)",
+    lastUpdated: "archived",
+    projectGroup: "Workforce",
+    priority: "P3",
+    renewalLikelihood: "Unknown",
+  },
+  {
+    id: "G-HIST-HEW-LEG",
+    title: "Climate resilience planning · prior award",
+    funder: "William and Flora Hewlett Foundation",
+    funderType: "Private",
+    stage: "Closed",
+    nextAction: "Archive",
+    deadline: "2024-03-01",
+    daysToDeadline: -400,
+    award: 95000,
+    weighted: 0,
+    ownerId: "elizabeth",
+    cycle: "2022",
+    fundingSource: "Climate program (ended)",
+    lastUpdated: "archived",
+    projectGroup: "Capacity",
+    priority: "P3",
+    renewalLikelihood: "Unknown",
+  },
+  {
+    id: "G-HIST-BCBS-LEG",
+    title: "Behavioral health integration · Y1 closed",
+    funder: "BCBS Foundation",
+    funderType: "Corporate",
+    stage: "Closed",
+    nextAction: "Archive",
+    deadline: "2020-12-31",
+    daysToDeadline: -1500,
+    award: 88000,
+    weighted: 0,
+    ownerId: "nina",
+    cycle: "2019",
+    fundingSource: "Health equity (ended)",
+    lastUpdated: "archived",
+    projectGroup: "Health Equity",
+    priority: "P3",
+    renewalLikelihood: "Unknown",
+  },
+  ...buildExtraDemoGrants(110),
 ]
 
 /** Prototype grant id for Racine underspend Q&A + `mixalt://grant/...` from chat */

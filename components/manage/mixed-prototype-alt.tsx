@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { FilledSparkle } from "@/components/ui/filled-sparkle"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
@@ -29,6 +29,7 @@ import { grantDisplayTitle } from "@/lib/manage/grant-context"
 import { ManagePrototypeSidebar } from "@/components/sidebar/manage-prototype-sidebar"
 import { MixAltUiProvider } from "@/components/manage/mix-alt-ui-context"
 import { ApplicationCyclesDemoProvider } from "@/components/manage/application-cycles-demo-context"
+import { defaultTimeRangeFilterPatch } from "@/lib/manage/time-range-filter"
 import {
   getMixAltSuggestions,
   isEffectiveUpcoming,
@@ -58,10 +59,15 @@ export function MixedPrototypeAlt() {
   const [pipelineInsightBannerDismissed, setPipelineInsightBannerDismissed] = useState(false)
   const [tableScopeGrants, setTableScopeGrants] = useState<Grant[]>(grants)
   const [kpiDrill, setKpiDrill] = useState<KpiDrill | null>(null)
+  const [pipelineFourthMetric, setPipelineFourthMetric] = useState<"winrate" | "team_capacity">("winrate")
   const [operatorBuiltinSlice, setOperatorBuiltinSlice] = useState("all")
   const [operatorViewId, setOperatorViewId] = useState("all")
   const [currentViewLabel, setCurrentViewLabel] = useState("Where are we?")
   const [issueNav, setIssueNav] = useState<IssueNavigationContext | null>(null)
+
+  useEffect(() => {
+    if (operatorBuiltinSlice !== "all") setPipelineFourthMetric("winrate")
+  }, [operatorBuiltinSlice])
 
   const [operatorHomeViewResetKey, setOperatorHomeViewResetKey] = useState(0)
   const handleGrainChange = useCallback((g: Grain) => {
@@ -124,8 +130,11 @@ export function MixedPrototypeAlt() {
   const mixAltInitialMessages = useMemo(() => getElizabethAssistantInitialMessages(), [])
   const pipelineInsightInitialMessages = useMemo(() => getPipelineInsightInitialMessages(), [])
 
-  /** Pulse / Board bridge KPIs only for the three Instrumentl built-ins — not sample presets or user-saved views. */
-  const showInstrumentlOperatorKpis = INSTRUMENTL_CANNED_VIEW_IDS.has(operatorViewId)
+  /** Pulse / Board bridge KPIs for Instrumentl built-ins and user saves that share the same lens (`all`, Board, Funder). */
+  const operatorKpiLensSlices = useMemo(() => new Set(["all", "board-leadership", "funder-portfolio"]), [])
+  const showOperatorKpiStrip =
+    INSTRUMENTL_CANNED_VIEW_IDS.has(operatorViewId) ||
+    (operatorViewId.startsWith("custom-") && operatorKpiLensSlices.has(operatorBuiltinSlice))
 
   useLayoutEffect(() => {
     if (grain !== "all-grants") tableLayoutAccumRef.current = 0
@@ -145,6 +154,8 @@ export function MixedPrototypeAlt() {
       discoveryTasksNone: discovery.tasksNone,
       chatSavedViewLabels: chatSavedViews,
       fiscalYearLabels: fiscalYearLabelsForGrants(grants),
+      grain,
+      operatorViewId,
     }
     return snap
   }, [
@@ -158,6 +169,8 @@ export function MixedPrototypeAlt() {
     discovery.deadlineNextMonth,
     discovery.tasksNone,
     chatSavedViews,
+    grain,
+    operatorViewId,
   ])
 
   const scriptedTurnWithPipelineInsight = useCallback(
@@ -242,9 +255,27 @@ export function MixedPrototypeAlt() {
           case "set_sort":
             queueMicrotask(() => filterApiRef.current?.setSort(e.column, e.dir))
             break
-          case "set_fiscal_year_filter":
-            queueMicrotask(() => filterApiRef.current?.setFilters({ fiscalYear: e.fiscalYear }))
+          case "set_fiscal_year_filter": {
+            const fy = e.fiscalYear
+            if (fy == null || fy === "") {
+              queueMicrotask(() => filterApiRef.current?.setFilters({ ...defaultTimeRangeFilterPatch() }))
+            } else {
+              const m = /^FY(\d{4})$/.exec(String(fy).trim())
+              const y = m?.[1]
+              queueMicrotask(() =>
+                filterApiRef.current?.setFilters(
+                  y
+                    ? {
+                        timeRangePreset: `fy${y}`,
+                        timeRangeCustomStart: null,
+                        timeRangeCustomEnd: null,
+                      }
+                    : { ...defaultTimeRangeFilterPatch() },
+                ),
+              )
+            }
             break
+          }
           case "set_column_visible":
             queueMicrotask(() => filterApiRef.current?.setColumnVisible(e.column, e.visible))
             break
@@ -253,6 +284,10 @@ export function MixedPrototypeAlt() {
             break
           case "move_column_after":
             queueMicrotask(() => filterApiRef.current?.moveColumnAfter(e.moved, e.after))
+            break
+          case "set_pipeline_fourth_metric":
+            setPipelineFourthMetric(e.metric)
+            setKpiDrill((d) => (d?.kind === "winrate" || d?.kind === "team_capacity" ? null : d))
             break
         }
       }
@@ -469,7 +504,7 @@ export function MixedPrototypeAlt() {
                           pageScrollParent={grantsScrollEl}
                           stickyFilterPrefix={<GrainNavToggle active={grain} onChange={handleGrainChange} size="panel" />}
                           pageScrollBetweenFiltersAndTable={
-                            !showInstrumentlOperatorKpis
+                            !showOperatorKpiStrip
                               ? null
                               : operatorBuiltinSlice === "board-leadership"
                                 ? (
@@ -490,6 +525,7 @@ export function MixedPrototypeAlt() {
                                             baseScope={tableScopeGrants}
                                             drill={kpiDrill}
                                             onDrill={handleKpiDrill}
+                                            fourthMetric={pipelineFourthMetric}
                                           />
                                         </div>
                                         {!pipelineInsightBannerDismissed ? (
@@ -508,8 +544,13 @@ export function MixedPrototypeAlt() {
                           }
                           operatorBuiltinAllLabel="Where are we?"
                           operatorHomeViewResetKey={operatorHomeViewResetKey}
+                          operatorPipelineFourthMetric={pipelineFourthMetric}
+                          onOperatorViewConfigApplied={(c) => {
+                            if (c.builtinSlice === "all")
+                              setPipelineFourthMetric(c.pipelineFourthMetric ?? "winrate")
+                          }}
                           kpiBridgeFilter={
-                            !showInstrumentlOperatorKpis || operatorBuiltinSlice === "funder-portfolio"
+                            !showOperatorKpiStrip || operatorBuiltinSlice === "funder-portfolio"
                               ? null
                               : kpiDrill
                                 ? (g) => passesKpiDrill(kpiDrill, g)
@@ -526,7 +567,7 @@ export function MixedPrototypeAlt() {
                           onOperatorSaveViewCommitted={(name) => {
                             setChatSavedViews((prev) => (prev.includes(name) ? prev : [...prev, name]))
                             chatPanelRef.current?.appendAgentMessage(
-                              `Saved "${name}" — it’s in your View menu with filters, grouping, columns, and sort.`,
+                              `Saved "${name}". You’re still on this view — open the View menu to switch. Where are we? saves include the fourth pipeline tile (win rate vs team capacity).`,
                             )
                           }}
                         />

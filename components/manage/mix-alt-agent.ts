@@ -21,6 +21,7 @@ export type MixAltEffect =
   | { type: "set_funder_type_filter"; funderType: FunderType | null }
   | { type: "set_sort"; column: ColKey | null; dir?: SortDir }
   | { type: "set_fiscal_year_filter"; fiscalYear: string | null }
+  | { type: "set_pipeline_fourth_metric"; metric: "winrate" | "team_capacity" }
   | { type: "set_column_visible"; column: ColKey; visible: boolean }
   | { type: "move_column_before"; moved: ColKey; before: ColKey }
   | { type: "move_column_after"; moved: ColKey; after: ColKey | null }
@@ -37,8 +38,12 @@ export type MixAltAgentSnapshot = {
   discoveryDeadlineNextMonth: boolean
   discoveryTasksNone: boolean
   chatSavedViewLabels: string[]
-  /** Distinct FY labels (`FY2026`, …) from seed grants — matches All grants Fiscal year chip. */
+  /** Distinct FY labels (`FY2026`, …) from seed grants — used when matching natural-language period commands. */
   fiscalYearLabels: string[]
+  /** Shell tab — pipeline KPI swap only applies on All grants. */
+  grain: Grain
+  /** Operator View menu id (`all` = “Where are we?”). */
+  operatorViewId: string
 }
 
 /** Subsequent agent message appended after the primary reply has streamed in.
@@ -301,7 +306,7 @@ function resolveOwnerFilterFromText(t: string): string | null {
   return null
 }
 
-/** FY labels for toolbar chip — same rule as All grants `fiscalYearOptions`. */
+/** FY labels (`FY2026`, …) derived from grant deadlines — used for NL period matching. */
 export function fiscalYearLabelsForGrants(grants: Grant[]): string[] {
   const set = new Set<number>()
   for (const g of grants) {
@@ -529,6 +534,50 @@ export function matchMixAltAgentTurn(raw: string, snap: MixAltAgentSnapshot): Mi
     }
   }
 
+  const whereAreWePipeline = snap.grain === "all-grants" && snap.operatorViewId === "all"
+
+  if (
+    !whereAreWePipeline &&
+    (/\breplace\b.*\bwin\s*rate\b.*\bteam\s*capacity\b/.test(t) ||
+      /\bteam\s*capacity\b.*\binstead\b.*\bwin\s*rate\b/.test(t))
+  ) {
+    return {
+      agentBody:
+        "Switch to **Where are we?** in the grants View menu first—that’s where the pipeline KPI strip (and the fourth tile) lives—then ask me to swap win rate for team capacity.",
+      effects: [],
+    }
+  }
+
+  if (
+    whereAreWePipeline &&
+    t.includes("team capacity") &&
+    (/\breplace\b.*\bwin\s*rate\b/.test(t) ||
+      /\bwin\s*rate\b.*\bteam\s*capacity\b/.test(t) ||
+      /\bteam\s*capacity\b.*\binstead\b.*\bwin\s*rate\b/.test(t) ||
+      (t.includes("fourth") && t.includes("tile") && (t.includes("show") || t.includes("use")) && t.includes("team")))
+  ) {
+    return {
+      agentBody:
+        "Done. The fourth pipeline tile now shows **Team capacity**—the **top four owners** by **share of weighted pipeline** in the current view (each row is % of total weighted dollars). Click the tile to filter the table to those owners’ grants. Ask to **restore win rate** when you want the original tile back.",
+      effects: [{ type: "set_pipeline_fourth_metric", metric: "team_capacity" }],
+    }
+  }
+
+  if (
+    whereAreWePipeline &&
+    (t.includes("win rate") || t.includes("winrate")) &&
+    (/\breplace\b.*\bteam\s*capacity\b/.test(t) ||
+      /\bteam\s*capacity\b.*\bwith\b.*\bwin\s*rate\b/.test(t) ||
+      (t.includes("restore") && t.includes("win")) ||
+      /\bback\b.*\bwin\s*rate\b/.test(t))
+  ) {
+    return {
+      agentBody:
+        "Done. Restored **Win rate** on the fourth pipeline tile. Click it to filter to the usual win-rate cohort.",
+      effects: [{ type: "set_pipeline_fourth_metric", metric: "winrate" }],
+    }
+  }
+
   // Grants table — toolbar filters, grouping, sort (wired via AllGrantsFilterApi)
   if (
     (t.includes("clear") && t.includes("filter")) ||
@@ -536,7 +585,7 @@ export function matchMixAltAgentTurn(raw: string, snap: MixAltAgentSnapshot): Mi
     t.includes("clear all filters")
   ) {
     return {
-      agentBody: "Done. Cleared fiscal year, funder type, owner, and period filters on the grants toolbar.",
+      agentBody: "Done. Cleared funder type, owner, and period filters on the grants toolbar — period reset to this year (YTD).",
       effects: [{ type: "clear_grant_toolbar_filters" }],
     }
   }
@@ -550,7 +599,7 @@ export function matchMixAltAgentTurn(raw: string, snap: MixAltAgentSnapshot): Mi
 
   if ((t.includes("clear") || t.includes("reset")) && t.includes("fiscal")) {
     return {
-      agentBody: "Done. Cleared the fiscal year filter.",
+      agentBody: "Done. Period filter reset to this year (YTD).",
       effects: [{ type: "set_fiscal_year_filter", fiscalYear: null }],
     }
   }
@@ -567,14 +616,14 @@ export function matchMixAltAgentTurn(raw: string, snap: MixAltAgentSnapshot): Mi
       /\bto\s+fy/.test(t))
   ) {
     return {
-      agentBody: `Done. Fiscal year filter set to ${fyPick}.`,
+      agentBody: `Done. Period filter set to ${fyPick.replace(/^FY(\d{4})$/, "FY $1")}.`,
       effects: [{ type: "set_fiscal_year_filter", fiscalYear: fyPick }],
     }
   }
   if ((/\bfy\s*\d{4}\b/.test(t) || /\bfiscal\s*(?:year\s*)?\d{4}/.test(t)) && fyPick === null) {
     return {
       agentBody:
-        "That fiscal year isn’t in the current data set—pick an FY that appears in the Fiscal year chip on the toolbar.",
+        "That fiscal year isn’t in the current data set—pick an FY that appears in the Period filter on the toolbar.",
       effects: [],
     }
   }
@@ -738,7 +787,7 @@ export function matchMixAltAgentTurn(raw: string, snap: MixAltAgentSnapshot): Mi
   if (t.includes("what can you do") || (t === "help") || t.includes("what can you")) {
     return {
       agentBody:
-        "I can set fiscal year, funder type, and owner filters on the grants toolbar; change grouping and sort; show, hide, or reorder columns; and save views. Try phrases like “show only federal grants”, “filter Maria”, “apply private”, “group by deadline”, or “clear all filters”.",
+        "I can set the period range, funder type, and owner filters on the grants toolbar; change grouping and sort; show, hide, or reorder columns; save views; and on **Where are we?** swap the fourth pipeline tile between **win rate** and **team capacity** (top-owner **weighted pipeline** share). Try phrases like “replace win rate with team capacity”, “show only federal grants”, or “clear all filters”.",
       effects: [],
     }
   }

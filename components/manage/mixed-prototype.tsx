@@ -21,6 +21,7 @@ import { grants } from "@/lib/manage/data"
 import { grantDisplayTitle } from "@/lib/manage/grant-context"
 import { ManagePrototypeSidebar } from "@/components/sidebar/manage-prototype-sidebar"
 import { ApplicationCyclesDemoProvider } from "@/components/manage/application-cycles-demo-context"
+import { defaultTimeRangeFilterPatch } from "@/lib/manage/time-range-filter"
 import {
   getMixAltSuggestions,
   isEffectiveUpcoming,
@@ -102,6 +103,8 @@ export function MixedPrototype() {
       discoveryTasksNone: discovery.tasksNone,
       chatSavedViewLabels: chatSavedViews,
       fiscalYearLabels: fiscalYearLabelsForGrants(grants),
+      grain,
+      operatorViewId: "all",
     }
   }, [
     tableScopeGrants,
@@ -113,6 +116,7 @@ export function MixedPrototype() {
     discovery.deadlineNextMonth,
     discovery.tasksNone,
     chatSavedViews,
+    grain,
   ])
 
   const applyMixAltEffects = useCallback(
@@ -186,9 +190,27 @@ export function MixedPrototype() {
           case "set_sort":
             queueMicrotask(() => filterApiRef.current?.setSort(e.column, e.dir))
             break
-          case "set_fiscal_year_filter":
-            queueMicrotask(() => filterApiRef.current?.setFilters({ fiscalYear: e.fiscalYear }))
+          case "set_fiscal_year_filter": {
+            const fy = e.fiscalYear
+            if (fy == null || fy === "") {
+              queueMicrotask(() => filterApiRef.current?.setFilters({ ...defaultTimeRangeFilterPatch() }))
+            } else {
+              const m = /^FY(\d{4})$/.exec(String(fy).trim())
+              const y = m?.[1]
+              queueMicrotask(() =>
+                filterApiRef.current?.setFilters(
+                  y
+                    ? {
+                        timeRangePreset: `fy${y}`,
+                        timeRangeCustomStart: null,
+                        timeRangeCustomEnd: null,
+                      }
+                    : { ...defaultTimeRangeFilterPatch() },
+                ),
+              )
+            }
             break
+          }
           case "set_column_visible":
             queueMicrotask(() => filterApiRef.current?.setColumnVisible(e.column, e.visible))
             break
@@ -197,6 +219,8 @@ export function MixedPrototype() {
             break
           case "move_column_after":
             queueMicrotask(() => filterApiRef.current?.moveColumnAfter(e.moved, e.after))
+            break
+          case "set_pipeline_fourth_metric":
             break
         }
       }

@@ -6,7 +6,16 @@ import { useScrollDockPins } from "@/hooks/use-scroll-dock-pins"
 import type { CSSProperties, ReactNode } from "react"
 import { grants as grantsData, stageOrder, team } from "@/lib/manage/data"
 import type { Grant, Stage, FunderType } from "@/lib/manage/types"
-import { grantDeadlineInCalendarYear } from "@/lib/manage/board-report"
+import { format, startOfDay, subDays } from "date-fns"
+import {
+  defaultTimeRangeFilterPatch,
+  grantDeadlineMatchesTimeRange,
+  migrateToolbarTimeRangeFilters,
+  timeRangeExportSuffix,
+  timeRangeMenuLabel,
+  TIME_RANGE_MENU,
+  type TimeRangePresetId,
+} from "@/lib/manage/time-range-filter"
 import { grantDisplayTitle } from "@/lib/manage/grant-context"
 import { cn } from "@/lib/utils"
 import { PriorityPill, StagePill } from "./status-pill"
@@ -102,6 +111,7 @@ const COLUMNS: ColDef[] = [
   { key: "grant", label: "Grant", width: "320px", group: "system", defaultVisible: true },
   { key: "funder", label: "Funder", width: "240px", group: "system", defaultVisible: true },
   { key: "status", label: "Status", width: "260px", group: "system", defaultVisible: true },
+  { key: "projectGroup", label: "Project group", width: "160px", group: "custom", defaultVisible: true },
   { key: "deadline", label: "Deadline", width: "180px", group: "system", defaultVisible: true },
   { key: "award", label: "Award", width: "132px", group: "system", defaultVisible: true },
   { key: "amountRequested", label: "Amount requested", width: "132px", group: "system", defaultVisible: false },
@@ -115,7 +125,6 @@ const COLUMNS: ColDef[] = [
   { key: "indirect", label: "Indirect", width: "96px", group: "system", defaultVisible: true },
   { key: "match", label: "Match", width: "88px", group: "system", defaultVisible: true },
   { key: "lastUpdated", label: "Last updated", width: "132px", group: "system", defaultVisible: true },
-  { key: "projectGroup", label: "Project group", width: "160px", group: "custom", defaultVisible: true },
   { key: "priority", label: "Priority", width: "96px", group: "custom", defaultVisible: true },
   { key: "renewal", label: "Renewal", width: "120px", group: "custom", defaultVisible: true },
   { key: "fpFunder", label: "Funder", width: "240px", group: "custom", defaultVisible: false },
@@ -142,6 +151,7 @@ const FUNDER_PORTFOLIO_TABLE_COL_ORDER: ColKey[] = [
   "lastUpdated",
   "deadline",
   "status",
+  "projectGroup",
   "amountRequested",
   "notificationDate",
   "owner",
@@ -152,7 +162,6 @@ const FUNDER_PORTFOLIO_TABLE_COL_ORDER: ColKey[] = [
   "period",
   "indirect",
   "match",
-  "projectGroup",
   "priority",
 ]
 
@@ -300,23 +309,6 @@ function parseGrantDeadline(iso: string): Date {
   return new Date(y, mo - 1, d)
 }
 
-/** Fiscal year Jul 1–Jun 30, labeled by the June year (e.g. FY2026 = 2025-07-01 … 2026-06-30). */
-function fiscalYearContainingDate(d: Date): number {
-  if (Number.isNaN(d.getTime())) return NaN
-  const y = d.getFullYear()
-  const m = d.getMonth()
-  return m >= 6 ? y + 1 : y
-}
-
-function formatFiscalYearLabel(fy: number): string {
-  return `FY${fy}`
-}
-
-function grantFiscalYearLabel(iso: string): string {
-  const fy = fiscalYearContainingDate(parseGrantDeadline(iso))
-  return Number.isFinite(fy) ? formatFiscalYearLabel(fy) : "—"
-}
-
 /** `YYYY-MM` for stable sort / group keys */
 function deadlineMonthKey(iso: string): string {
   const d = parseGrantDeadline(iso)
@@ -375,12 +367,17 @@ function applyViewFilters(
   viewId: string,
   prev: Record<string, string | null>,
 ): Record<string, string | null> {
-  if (viewId === "maria") return { ...prev, owner: "maria", periodYtd: null }
-  if (viewId === "fed-100k") return { ...prev, funderType: "Federal", periodYtd: null }
-  return { funderType: null, owner: null, fiscalYear: null, periodYtd: null }
+  const tr = defaultTimeRangeFilterPatch()
+  if (viewId === "maria") {
+    return migrateToolbarTimeRangeFilters({ ...prev, ...tr, owner: "maria", funderType: null })
+  }
+  if (viewId === "fed-100k") {
+    return migrateToolbarTimeRangeFilters({ ...prev, ...tr, funderType: "Federal", owner: null })
+  }
+  return migrateToolbarTimeRangeFilters({ ...prev, ...tr, funderType: null, owner: null })
 }
 
-type OperatorViewConfig = {
+export type OperatorViewConfig = {
   builtinSlice: string
   groupBy: GroupBy
   visibleColKeys: ColKey[]
@@ -388,6 +385,8 @@ type OperatorViewConfig = {
   filters: Record<string, string | null>
   /** Present when the saved view lineage is the Funder portfolio lens. */
   funderPortfolioKpi?: FunderPortfolioKpiState
+  /** Mixed-alt: fourth pipeline tile on “Where are we?” (`builtinSlice === "all"`). */
+  pipelineFourthMetric?: "winrate" | "team_capacity"
 }
 
 type OperatorSavedView = { id: string; label: string; config: OperatorViewConfig }
@@ -463,6 +462,10 @@ export function AllGrants({
   /** When incremented (e.g. switching back to All grants tab), snap to built-in `all` (“Where are we?”). */
   operatorHomeViewResetKey,
   onOperatorSaveViewCommitted,
+  /** Current fourth KPI tile (pipeline overview); stored on save when `builtinSlice` is `all`. */
+  operatorPipelineFourthMetric,
+  /** After applying a saved/custom view configuration (e.g. restore team capacity tile). */
+  onOperatorViewConfigApplied,
 }: {
   onOpenGrant: (id: string) => void
   variant?: "default" | "operator"
@@ -495,6 +498,8 @@ export function AllGrants({
   operatorHomeViewResetKey?: number
   /** Operator: after Save view dialog commits — in-chat ack instead of toast when set (mixed shells). */
   onOperatorSaveViewCommitted?: (name: string) => void
+  operatorPipelineFourthMetric?: "winrate" | "team_capacity"
+  onOperatorViewConfigApplied?: (config: OperatorViewConfig) => void
 }) {
   const [selectedViewId, setSelectedViewId] = useState("all")
   const [customViews, setCustomViews] = useState<OperatorSavedView[]>([])
@@ -520,18 +525,16 @@ export function AllGrants({
   const [grants, setGrants] = useState<Grant[]>(grantsData)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
-  const [filters, setFilters] = useState<Record<string, string | null>>({
-    fiscalYear: null,
+  const [filters, setFilters] = useState<Record<string, string | null>>(() => ({
+    ...defaultTimeRangeFilterPatch(),
     funderType: null,
     owner: null,
-    periodYtd: null,
-  })
-  const [filterBaseline, setFilterBaseline] = useState<Record<string, string | null>>({
-    fiscalYear: null,
+  }))
+  const [filterBaseline, setFilterBaseline] = useState<Record<string, string | null>>(() => ({
+    ...defaultTimeRangeFilterPatch(),
     funderType: null,
     owner: null,
-    periodYtd: null,
-  })
+  }))
   const [sortKey, setSortKey] = useState<ColKey | null>(null)
   const [sortDir, setSortDir] = useState<SortDir>("asc")
   const [colOrder, setColOrder] = useState<ColKey[]>(() => [...NON_GRANT_COLUMN_KEYS])
@@ -565,7 +568,6 @@ export function AllGrants({
 
   const boardAudience = variant === "operator" && builtinSlice === "board-leadership"
   const funderPortfolioLens = variant === "operator" && builtinSlice === "funder-portfolio"
-  const periodLensAudience = boardAudience
 
   const router = useRouter()
   const pathname = usePathname()
@@ -582,10 +584,9 @@ export function AllGrants({
     setColOrder(boardOrder)
     setColumnLayoutBaseline(snapshotOperatorColumnLayout(boardVis, boardOrder))
     const nextFilters: Record<string, string | null> = {
-      fiscalYear: null,
+      ...defaultTimeRangeFilterPatch(),
       funderType: null,
       owner: null,
-      periodYtd: "2026",
     }
     setFilters(nextFilters)
     setFilterBaseline({ ...nextFilters })
@@ -605,10 +606,9 @@ export function AllGrants({
     setColOrder(fpOrder)
     setColumnLayoutBaseline(snapshotOperatorColumnLayout(fpVis, fpOrder))
     const nextFilters: Record<string, string | null> = {
-      fiscalYear: null,
+      ...defaultTimeRangeFilterPatch(),
       funderType: null,
       owner: null,
-      periodYtd: null,
     }
     setFilters(nextFilters)
     setFilterBaseline({ ...nextFilters })
@@ -712,16 +712,7 @@ export function AllGrants({
     })
   }, [])
 
-  const fpAnchorYear = useMemo(() => {
-    const y = filters.periodYtd ? parseInt(filters.periodYtd, 10) : NaN
-    if (Number.isFinite(y)) return y
-    let maxY = 0
-    for (const g of grants) {
-      const yy = parseInt(g.deadline.split("T")[0]?.split("-")[0] ?? "", 10)
-      if (Number.isFinite(yy)) maxY = Math.max(maxY, yy)
-    }
-    return maxY || new Date().getFullYear()
-  }, [filters.periodYtd, grants])
+  const fpAnchorYear = portfolioNow.getFullYear()
 
   useEffect(() => {
     if (!onOperatorBuiltinSliceChange || variant !== "operator") return
@@ -741,39 +732,11 @@ export function AllGrants({
   }, [visibleCols, colOrder])
   const gridTemplate = cols.map((c) => c.width).join(" ")
 
-  const fiscalYearOptions = useMemo(() => {
-    const set = new Set<number>()
-    for (const g of grants) {
-      const fy = fiscalYearContainingDate(parseGrantDeadline(g.deadline))
-      if (Number.isFinite(fy)) set.add(fy)
-    }
-    return Array.from(set)
-      .sort((a, b) => a - b)
-      .map(formatFiscalYearLabel)
-  }, [grants])
-
-  /** Board / Leadership template — calendar years present in seed data (period filter). */
-  const calendarYearOptions = useMemo(() => {
-    const set = new Set<number>()
-    for (const g of grants) {
-      const d = parseGrantDeadline(g.deadline)
-      if (Number.isNaN(d.getTime())) continue
-      set.add(d.getFullYear())
-    }
-    const sorted = Array.from(set).sort((a, b) => b - a)
-    if (sorted.length === 0) return ["2026"]
-    return sorted.map(String)
-  }, [grants])
-
   const filteredBase = useMemo(() => {
     let list = grants.filter((g) => {
-      if (filters.fiscalYear && grantFiscalYearLabel(g.deadline) !== filters.fiscalYear) return false
       if (filters.funderType && g.funderType !== filters.funderType) return false
       if (filters.owner && g.ownerId !== filters.owner) return false
-      if (filters.periodYtd) {
-        const y = parseInt(filters.periodYtd, 10)
-        if (!Number.isFinite(y) || !grantDeadlineInCalendarYear(g.deadline, y)) return false
-      }
+      if (!grantDeadlineMatchesTimeRange(g.deadline, filters, portfolioNow, g.stage)) return false
       if (extraGrantFilter && !extraGrantFilter(g)) return false
       return true
     })
@@ -808,7 +771,7 @@ export function AllGrants({
     }
 
     return list
-  }, [grants, filters, builtinSlice, extraGrantFilter])
+  }, [grants, filters, builtinSlice, extraGrantFilter, portfolioNow])
 
   const afterBridge = useMemo(() => {
     if (!kpiBridgeFilter) return filteredBase
@@ -858,10 +821,11 @@ export function AllGrants({
 
   const filtersDirty = useMemo(() => {
     return (
-      filters.fiscalYear !== filterBaseline.fiscalYear ||
+      (filters.timeRangePreset ?? null) !== (filterBaseline.timeRangePreset ?? null) ||
+      (filters.timeRangeCustomStart ?? null) !== (filterBaseline.timeRangeCustomStart ?? null) ||
+      (filters.timeRangeCustomEnd ?? null) !== (filterBaseline.timeRangeCustomEnd ?? null) ||
       filters.funderType !== filterBaseline.funderType ||
-      filters.owner !== filterBaseline.owner ||
-      (filters.periodYtd ?? null) !== (filterBaseline.periodYtd ?? null)
+      filters.owner !== filterBaseline.owner
     )
   }, [filters, filterBaseline])
 
@@ -931,26 +895,30 @@ export function AllGrants({
     return () => ro.disconnect()
   }, [updateTableScrollShadows, sortedFiltered, cols])
 
-  const applyOperatorViewConfig = useCallback((c: OperatorViewConfig) => {
-    setGroupBy(c.groupBy)
-    const nextVisible = new Set(c.visibleColKeys)
-    const nextOrder = [...c.colOrder]
-    setVisibleCols(nextVisible)
-    setColOrder(nextOrder)
-    setColumnLayoutBaseline(snapshotOperatorColumnLayout(nextVisible, nextOrder))
-    const fpRaw = c.funderPortfolioKpi ?? DEFAULT_FUNDER_PORTFOLIO_KPI
-    const fpNext: FunderPortfolioKpiState = {
-      topFundersOnly: Boolean(fpRaw.topFundersOnly),
-      multiYearOnly: Boolean(fpRaw.multiYearOnly),
-    }
-    setFpKpi(fpNext)
-    setFpKpiBaseline({ ...fpNext })
-    setFilters((prev) => {
-      const next = { ...prev, ...c.filters }
-      setFilterBaseline({ ...next })
-      return next
-    })
-  }, [])
+  const applyOperatorViewConfig = useCallback(
+    (c: OperatorViewConfig) => {
+      setGroupBy(c.groupBy)
+      const nextVisible = new Set(c.visibleColKeys)
+      const nextOrder = [...c.colOrder]
+      setVisibleCols(nextVisible)
+      setColOrder(nextOrder)
+      setColumnLayoutBaseline(snapshotOperatorColumnLayout(nextVisible, nextOrder))
+      const fpRaw = c.funderPortfolioKpi ?? DEFAULT_FUNDER_PORTFOLIO_KPI
+      const fpNext: FunderPortfolioKpiState = {
+        topFundersOnly: Boolean(fpRaw.topFundersOnly),
+        multiYearOnly: Boolean(fpRaw.multiYearOnly),
+      }
+      setFpKpi(fpNext)
+      setFpKpiBaseline({ ...fpNext })
+      setFilters((prev) => {
+        const merged = migrateToolbarTimeRangeFilters({ ...prev, ...c.filters })
+        setFilterBaseline({ ...merged })
+        return merged
+      })
+      onOperatorViewConfigApplied?.(c)
+    },
+    [onOperatorViewConfigApplied],
+  )
 
   const activateOperatorViewFromMenu = useCallback(
     (id: string) => {
@@ -1121,17 +1089,20 @@ export function AllGrants({
         colOrder: [...colOrder],
         filters: { ...filters },
         funderPortfolioKpi: baseSlice === "funder-portfolio" ? { ...fpKpi } : undefined,
+        pipelineFourthMetric:
+          baseSlice === "all" ? (operatorPipelineFourthMetric ?? "winrate") : undefined,
       }
       setCustomViews((prev) => [...prev, { id, label: trimmed, config }])
-      setSelectedViewId(id)
       setFilterBaseline({ ...config.filters })
       setFpKpiBaseline({ ...fpKpi })
       setColumnLayoutBaseline(snapshotOperatorColumnLayout(visibleCols, colOrder))
       if (!opts?.silent) {
-        toast("View saved", { description: `“${trimmed}” is in the View menu.` })
+        toast("View saved", {
+          description: `“${trimmed}” is in the View menu — you’re still on the current view.`,
+        })
       }
     },
-    [selectedViewId, customViews, groupBy, visibleCols, colOrder, filters, fpKpi],
+    [selectedViewId, customViews, groupBy, visibleCols, colOrder, filters, fpKpi, operatorPipelineFourthMetric],
   )
 
   /** Operator: export (PDF/CSV) on pipeline “Where are we?” (`all`) plus Board & Funder built-ins. */
@@ -1141,13 +1112,14 @@ export function AllGrants({
   const queueLensExport = useCallback(
     (format: "pdf" | "csv", opts?: { silent?: boolean }) => {
       let base: string
+      const periodLabel = timeRangeExportSuffix(filters, portfolioNow)
       if (boardAudience) {
-        base = `Board / Leadership · ${filters.periodYtd ?? "All periods"}`
+        base = `Board / Leadership · ${periodLabel}`
       } else if (funderPortfolioLens) {
-        base = `Funder portfolio · ${filters.periodYtd ? `YTD ${filters.periodYtd}` : "All time"}`
+        base = `Funder portfolio · ${periodLabel}`
       } else {
         const viewName = operatorBuiltinAllLabel ?? "All active"
-        base = `${viewName} · ${filters.periodYtd ?? "All periods"}`
+        base = `${viewName} · ${periodLabel}`
       }
 
       const tableColumns = cols.map((c) => ({
@@ -1210,7 +1182,8 @@ export function AllGrants({
     [
       boardAudience,
       funderPortfolioLens,
-      filters.periodYtd,
+      filters,
+      portfolioNow,
       operatorBuiltinAllLabel,
       cols,
       sortedFiltered,
@@ -1246,10 +1219,9 @@ export function AllGrants({
         forkIfCannedOperatorEdit()
         setFilters((prev) => ({
           ...prev,
-          fiscalYear: null,
+          ...defaultTimeRangeFilterPatch(),
           funderType: null,
           owner: null,
-          periodYtd: null,
         }))
       },
       setColumnVisible: setColumnVisibleApi,
@@ -1388,26 +1360,14 @@ export function AllGrants({
 
           <div className="mx-1 hidden h-5 w-px shrink-0 bg-border sm:block" aria-hidden />
 
-          {periodLensAudience ? (
-            <BoardPeriodFilterChip
-              year={filters.periodYtd}
-              options={calendarYearOptions}
-              onChange={(y) => {
-                forkIfCannedOperatorEdit()
-                setFilters({ ...filters, periodYtd: y })
-              }}
-            />
-          ) : (
-            <FilterChip
-              label="Fiscal year"
-              value={filters.fiscalYear}
-              options={fiscalYearOptions}
-              onChange={(v) => {
-                forkIfCannedOperatorEdit()
-                setFilters({ ...filters, fiscalYear: v })
-              }}
-            />
-          )}
+          <TimeRangeFilterChip
+            filters={filters}
+            now={portfolioNow}
+            onPatch={(patch) => {
+              forkIfCannedOperatorEdit()
+              setFilters((prev) => ({ ...prev, ...patch }))
+            }}
+          />
           <FilterChip
             label="Funder type"
             value={filters.funderType}
@@ -1907,8 +1867,7 @@ export function AllGrants({
           <DialogHeader>
             <DialogTitle>Save view</DialogTitle>
             <DialogDescription>
-              Saves this table layout: built-in slice, filters, grouping, and visible columns. Pick it anytime from the View
-              menu.
+              Saves filters, grouping, columns, and sort. Pick it from the View menu when you need it.
             </DialogDescription>
           </DialogHeader>
           <Input
@@ -1921,7 +1880,7 @@ export function AllGrants({
               if (e.key === "Enter") handleSaveCustomView()
             }}
           />
-          <DialogFooter className="gap-2 sm:gap-0">
+          <DialogFooter className="gap-3">
             <Button type="button" variant="outline" onClick={() => setSaveViewOpen(false)}>
               Cancel
             </Button>
@@ -2469,6 +2428,126 @@ function SortableColumnHeader({
   )
 }
 
+function TimeRangeFilterChip({
+  filters,
+  now,
+  onPatch,
+}: {
+  filters: Record<string, string | null>
+  now: Date
+  onPatch: (patch: Record<string, string | null>) => void
+}) {
+  const preset = filters.timeRangePreset ?? "ytd"
+  const isDefaultYtd = preset === "ytd"
+
+  const displayValue =
+    preset === "custom" && filters.timeRangeCustomStart && filters.timeRangeCustomEnd
+      ? `${filters.timeRangeCustomStart} – ${filters.timeRangeCustomEnd}`
+      : timeRangeMenuLabel(preset)
+
+  const selectPreset = (id: TimeRangePresetId) => {
+    if (id === "custom") {
+      const end = startOfDay(now)
+      const start = subDays(end, 30)
+      onPatch({
+        timeRangePreset: "custom",
+        timeRangeCustomStart: format(start, "yyyy-MM-dd"),
+        timeRangeCustomEnd: format(end, "yyyy-MM-dd"),
+      })
+    } else {
+      onPatch({
+        timeRangePreset: id,
+        timeRangeCustomStart: null,
+        timeRangeCustomEnd: null,
+      })
+    }
+  }
+
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className={[
+            "inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border px-2 text-[11px]",
+            !isDefaultYtd
+              ? "border-primary/25 bg-primary/5 text-foreground"
+              : "border-border text-muted-foreground hover:text-foreground",
+          ].join(" ")}
+        >
+          <Filter className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden />
+          <span className="shrink-0 font-medium text-muted-foreground">Period</span>
+          <>
+            <span className="text-muted-foreground/60">:</span>
+            <span className="max-w-[11rem] shrink truncate font-semibold text-primary">{displayValue}</span>
+          </>
+          {!isDefaultYtd ? (
+            <span
+              role="button"
+              onClick={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                onPatch({ ...defaultTimeRangeFilterPatch() })
+              }}
+              className="ml-0.5 rounded p-0.5 hover:bg-primary/10"
+              aria-label="Reset to this year (YTD)"
+            >
+              <X className="h-2.5 w-2.5" />
+            </span>
+          ) : null}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-[min(100vw-2rem,17rem)] p-2">
+        <div className="space-y-0.5">
+          {TIME_RANGE_MENU.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => selectPreset(item.id)}
+              className="flex w-full items-center justify-between rounded px-2 py-1.5 text-left text-xs hover:bg-muted"
+            >
+              {item.label}
+              {preset === item.id ? <span className="text-primary">✓</span> : null}
+            </button>
+          ))}
+        </div>
+        {preset === "custom" ? (
+          <div className="mt-2 space-y-2 border-t border-border/50 pt-2">
+            <label className="block text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+              Start
+            </label>
+            <input
+              type="date"
+              className="h-8 w-full rounded-md border border-border bg-background px-2 text-xs"
+              value={filters.timeRangeCustomStart ?? ""}
+              onChange={(e) =>
+                onPatch({
+                  timeRangePreset: "custom",
+                  timeRangeCustomStart: e.target.value || null,
+                })
+              }
+            />
+            <label className="block text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+              End
+            </label>
+            <input
+              type="date"
+              className="h-8 w-full rounded-md border border-border bg-background px-2 text-xs"
+              value={filters.timeRangeCustomEnd ?? ""}
+              onChange={(e) =>
+                onPatch({
+                  timeRangePreset: "custom",
+                  timeRangeCustomEnd: e.target.value || null,
+                })
+              }
+            />
+          </div>
+        ) : null}
+      </PopoverContent>
+    </Popover>
+  )
+}
+
 function FilterChip({
   label,
   value,
@@ -2522,81 +2601,6 @@ function FilterChip({
           >
             {opt}
             {opt === value && <span className="text-primary">✓</span>}
-          </button>
-        ))}
-      </PopoverContent>
-    </Popover>
-  )
-}
-
-function BoardPeriodFilterChip({
-  year,
-  options,
-  onChange,
-}: {
-  year: string | null
-  options: string[]
-  onChange: (y: string | null) => void
-}) {
-  return (
-    <Popover>
-      <PopoverTrigger asChild>
-        <button
-          type="button"
-          className={[
-            "inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border px-2 text-[11px]",
-            year
-              ? "border-primary/25 bg-primary/5 text-foreground"
-              : "border-border text-muted-foreground hover:text-foreground",
-          ].join(" ")}
-          title={
-            year
-              ? `Grant deadlines in calendar year ${year} (board report scope)`
-              : "Show grants across all calendar years — click to choose a year"
-          }
-        >
-          <Filter className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden />
-          <span className="shrink-0 font-medium text-muted-foreground">Period</span>
-          {year ? (
-            <>
-              <span className="text-muted-foreground/60">:</span>
-              <span className="shrink-0 font-semibold text-primary">YTD {year}</span>
-              <span
-                role="button"
-                onClick={(e) => {
-                  e.preventDefault()
-                  e.stopPropagation()
-                  onChange(null)
-                }}
-                className="ml-0.5 rounded p-0.5 hover:bg-primary/10"
-                aria-label="Clear period filter"
-              >
-                <X className="h-2.5 w-2.5" />
-              </span>
-            </>
-          ) : (
-            <span className="text-muted-foreground/80">All time</span>
-          )}
-        </button>
-      </PopoverTrigger>
-      <PopoverContent align="start" className="w-44 p-1">
-        <button
-          type="button"
-          onClick={() => onChange(null)}
-          className="flex w-full items-center justify-between rounded px-2 py-1.5 text-xs hover:bg-muted"
-        >
-          All time
-          {!year ? <span className="text-primary">✓</span> : null}
-        </button>
-        {options.map((opt) => (
-          <button
-            key={opt}
-            type="button"
-            onClick={() => onChange(opt)}
-            className="flex w-full items-center justify-between rounded px-2 py-1.5 text-xs hover:bg-muted"
-          >
-            YTD {opt}
-            {opt === year ? <span className="text-primary">✓</span> : null}
           </button>
         ))}
       </PopoverContent>

@@ -319,8 +319,10 @@ export function PulseStripBridge(props: {
   baseScope: Grant[]
   drill: KpiDrill | null
   onDrill: (next: KpiDrill | null) => void
+  /** Fourth tile on “Where are we?” — default win rate; agent can swap to team capacity. */
+  fourthMetric?: "winrate" | "team_capacity"
 }) {
-  return <PulseStripBridgeRecharts {...props} />
+  return <PulseStripBridgeRecharts {...props} fourthMetric={props.fourthMetric ?? "winrate"} />
 }
 
 function PipelineCard() {

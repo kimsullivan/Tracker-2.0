@@ -1,5 +1,6 @@
 import type { BoardKpiSlice } from "@/lib/manage/board-report"
 import { grantMatchesBoardKpiSlice } from "@/lib/manage/board-report"
+import { team } from "@/lib/manage/data"
 import type { FunderType, Grant } from "@/lib/manage/types"
 
 export type { BoardKpiSlice } from "@/lib/manage/board-report"
@@ -74,6 +75,13 @@ export function filterCapacityCohort(g: Grant): boolean {
   return g.ownerId === "maria"
 }
 
+/** Team capacity drill — grants owned by managers at high prototype load (80%+). */
+export function filterTeamCapacityCohort(g: Grant): boolean {
+  if (g.ownerId === "unassigned") return false
+  const m = team.find((t) => t.id === g.ownerId)
+  return m != null && m.load >= 80
+}
+
 export function fmtAwardChip(n: number): string {
   if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(2)}M`
   if (n >= 1000) return `$${(n / 1000).toFixed(0)}k`
@@ -140,6 +148,7 @@ export type KpiDrill =
   | { kind: "inFlight"; slice: "submitted" | "inProgress" }
   | { kind: "closed"; outcome: "awarded" | "lost" }
   | { kind: "winrate" }
+  | { kind: "team_capacity"; topOwnerIds?: string[] }
   | { kind: "pipeline"; bucket: PipelineBucketId }
   | { kind: "weighted" }
   | { kind: "funder"; funderType: FunderType }
@@ -157,6 +166,9 @@ export function passesKpiDrill(d: KpiDrill | null, g: Grant): boolean {
       return grantMatchesClosedOutcome(g, d.outcome)
     case "winrate":
       return filterWinRateCohort(g)
+    case "team_capacity":
+      if (d.topOwnerIds && d.topOwnerIds.length > 0) return d.topOwnerIds.includes(g.ownerId)
+      return filterTeamCapacityCohort(g)
     case "pipeline":
       return grantInPipelineBucket(g, d.bucket)
     case "weighted":
@@ -195,6 +207,9 @@ export function drillChipTitle(d: KpiDrill): string {
       return "Weighted pipeline"
     case "winrate":
       return "Win-rate cohort"
+    case "team_capacity":
+      if (d.topOwnerIds && d.topOwnerIds.length > 0) return "Top owners (allocation)"
+      return "Team capacity (high load)"
     case "funder":
       return `${d.funderType} funders`
     case "board":

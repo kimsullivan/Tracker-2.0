@@ -15,13 +15,14 @@ import {
 import { Area, AreaChart, Cell, Pie, PieChart, ResponsiveContainer } from "recharts"
 import { cn } from "@/lib/utils"
 import type { FunderType, Grant } from "@/lib/manage/types"
-import { grants } from "@/lib/manage/data"
+import { grants, team } from "@/lib/manage/data"
 import {
   sumAward,
   sumWeighted,
   grantFunnelStage,
   countConsideredGrantsByFunder,
   FUNNEL_DISPLAY_CONSIDERED_COUNT,
+  filterWeightedPipelineMember,
   type FunnelStageId,
   type KpiDrill,
 } from "@/lib/manage/kpi-bridge"
@@ -1057,13 +1058,130 @@ function BridgeWinRateSparkTile({
   )
 }
 
-function PulseStripBridgeRechartsInner(props: {
+function sameTopOwnerDrill(saved: string[] | undefined, current: string[]): boolean {
+  if (!saved || saved.length !== current.length) return false
+  const set = new Set(saved)
+  return current.every((id) => set.has(id))
+}
+
+function BridgeTeamCapacitySparkTile({
+  drill,
+  aggregateScope,
+  onDrillTeamCapacity,
+}: {
+  drill: KpiDrill | null
+  aggregateScope: Grant[]
+  onDrillTeamCapacity: (topOwnerIds: string[]) => void
+}) {
+  const allocation = useMemo(() => {
+    const byOwner = new Map<string, number>()
+    let totalWeighted = 0
+    for (const g of aggregateScope) {
+      if (!filterWeightedPipelineMember(g)) continue
+      const w = g.weighted ?? 0
+      if (w <= 0) continue
+      totalWeighted += w
+      const oid = g.ownerId
+      byOwner.set(oid, (byOwner.get(oid) ?? 0) + w)
+    }
+    const ranked = [...byOwner.entries()].sort((a, b) => b[1] - a[1])
+    const top = ranked.slice(0, 4)
+    const rows = top.map(([ownerId, sumW]) => {
+      const label = team.find((t) => t.id === ownerId)?.name ?? (ownerId === "unassigned" ? "Unassigned" : ownerId)
+      const pct = totalWeighted > 0 ? Math.round((100 * sumW) / totalWeighted) : 0
+      return { ownerId, label, sumW, pct }
+    })
+    const ownerIds = rows.map((r) => r.ownerId)
+    const topWeighted = rows.reduce((s, r) => s + r.sumW, 0)
+    const topSharePct = totalWeighted > 0 ? Math.round((100 * topWeighted) / totalWeighted) : 0
+    return { rows, totalWeighted, ownerIds, topSharePct }
+  }, [aggregateScope])
+
+  const capActive = drill?.kind === "team_capacity" && sameTopOwnerDrill(drill.topOwnerIds, allocation.ownerIds)
+  const canDrill = allocation.ownerIds.length > 0
+
+  return (
+    <button
+      type="button"
+      disabled={!canDrill}
+      title={
+        canDrill
+          ? "Filter to these owners’ grants (weighted pipeline in view)"
+          : "No weighted pipeline in the current view"
+      }
+      onClick={() => canDrill && onDrillTeamCapacity(allocation.ownerIds)}
+      style={{ fontFamily: KPI_CHART_FONT }}
+      className={cn(
+        "flex h-[220px] w-full flex-col rounded-[12px] border-[0.5px] p-[18px] text-left gap-1.5 outline-none",
+        "border-[rgba(0,0,0,0.08)] bg-[color:#FFFFFF] dark:border-border dark:bg-card",
+        MIXED_ALT_TILE_CHROME,
+        capActive && DRILL_ROW_ACTIVE,
+        !canDrill && "cursor-not-allowed opacity-80",
+      )}
+    >
+      <AllActiveTileHeader
+        label="Team capacity"
+        right={
+          <span
+            className="rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide"
+            style={{ color: AG_KPI_TOKENS.textTertiary, background: "rgba(0,0,0,0.05)" }}
+          >
+            Top 4 · weighted
+          </span>
+        }
+      />
+      <AllActiveTileHero
+        value={canDrill ? `${allocation.topSharePct}%` : "—"}
+        caption={
+          canDrill
+            ? `Top owners’ share of weighted pipeline in view (${allocation.rows.length} shown)`
+            : "Add in-flight grants with weighted pipeline to see allocation"
+        }
+      />
+
+      <div className="mt-0.5 flex min-h-0 flex-1 flex-col justify-end gap-1">
+        {allocation.rows.map((r) => (
+          <div key={r.ownerId} className="flex min-w-0 items-center gap-2">
+            <span
+              className="w-[78px] shrink-0 truncate text-[10px] font-semibold leading-tight"
+              style={{ color: AG_KPI_TOKENS.textSecondary }}
+              title={r.label}
+            >
+              {r.label}
+            </span>
+            <div className="min-h-[6px] min-w-0 flex-1 rounded-full bg-muted/80">
+              <div
+                className={cn("h-[6px] max-w-full rounded-full", KPI_BAR_WIDTH_TRANSITION_CLASS)}
+                style={{
+                  width: `${r.pct}%`,
+                  backgroundColor: AG_KPI_TOKENS.purple600,
+                }}
+              />
+            </div>
+            <span
+              className="w-8 shrink-0 text-right text-[10px] font-bold tabular-nums leading-none"
+              style={{ color: AG_KPI_TOKENS.textPrimary }}
+            >
+              {r.pct}%
+            </span>
+          </div>
+        ))}
+      </div>
+    </button>
+  )
+}
+
+function PulseStripBridgeRechartsInner({
+  baseScope,
+  drill,
+  onDrill,
+  fourthMetric = "winrate",
+}: {
   baseScope: Grant[]
   drill: KpiDrill | null
   onDrill: (next: KpiDrill | null) => void
+  fourthMetric?: "winrate" | "team_capacity"
 }) {
-  const { baseScope, drill, onDrill } = props
-
   /**
    * KPI tiles always aggregate the full view-filtered grant set (`baseScope`).
    * The active drill only narrows the table via `kpiBridgeFilter` — if we filtered
@@ -1134,6 +1252,14 @@ function PulseStripBridgeRechartsInner(props: {
     }
     onDrill({ kind: "winrate" })
   }
+  function drillTeamCapacity(topOwnerIds: string[]) {
+    if (topOwnerIds.length === 0) return
+    if (drill?.kind === "team_capacity" && sameTopOwnerDrill(drill.topOwnerIds, topOwnerIds)) {
+      onDrill(null)
+      return
+    }
+    onDrill({ kind: "team_capacity", topOwnerIds })
+  }
 
   return (
     <div className="grid w-full min-w-0 grid-cols-1 gap-3 font-sans md:grid-cols-2 xl:grid-cols-4">
@@ -1159,24 +1285,43 @@ function PulseStripBridgeRechartsInner(props: {
         drill={drill}
         onDrillClosed={drillClosed}
       />
-      <BridgeWinRateSparkTile
-        drill={drill}
-        winPct={winPct}
-        priorPct={priorWinPct}
-        onDrillWinrate={drillWinrate}
-      />
+      {fourthMetric === "team_capacity" ? (
+        <BridgeTeamCapacitySparkTile
+          drill={drill}
+          aggregateScope={aggregateScope}
+          onDrillTeamCapacity={drillTeamCapacity}
+        />
+      ) : (
+        <BridgeWinRateSparkTile
+          drill={drill}
+          winPct={winPct}
+          priorPct={priorWinPct}
+          onDrillWinrate={drillWinrate}
+        />
+      )}
     </div>
   )
 }
 
-export function PulseStripBridgeRecharts(props: {
+export function PulseStripBridgeRecharts({
+  baseScope,
+  drill,
+  onDrill,
+  fourthMetric = "winrate",
+}: {
   baseScope: Grant[]
   drill: KpiDrill | null
   onDrill: (next: KpiDrill | null) => void
+  fourthMetric?: "winrate" | "team_capacity"
 }) {
   return (
     <KpiChartMotionProvider>
-      <PulseStripBridgeRechartsInner {...props} />
+      <PulseStripBridgeRechartsInner
+        baseScope={baseScope}
+        drill={drill}
+        onDrill={onDrill}
+        fourthMetric={fourthMetric}
+      />
     </KpiChartMotionProvider>
   )
 }
