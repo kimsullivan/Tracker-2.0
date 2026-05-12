@@ -45,7 +45,9 @@ import {
   deadlineRelativeLabel as appDeadlineRelativeLabel,
   deadlineUrgency,
   flattenApplications,
+  formatSubmissionDateDisplay,
   patchAppCycleRow,
+  submissionDateIsoForPicker,
 } from "@/lib/manage/application-cycles"
 import {
   UploadApplicationDialog,
@@ -1738,7 +1740,9 @@ function ApplicationCyclesPanel({
                         return <span className="text-muted-foreground">{formatSingleCycleDate(row.cycleDate)}</span>
                       })()}
                     </TableCell>
-                    <TableCell className="tabular-nums text-muted-foreground">{row.submissionDate}</TableCell>
+                    <TableCell className="tabular-nums text-muted-foreground">
+                      {formatSubmissionDateDisplay(row.submissionDate)}
+                    </TableCell>
                     <TableCell>
                       <span className="inline-flex items-center gap-1.5 text-[12px] text-foreground">
                         <span className={cn("size-1.5 shrink-0 rounded-full", appStatusDotClass(row.status))} aria-hidden />
@@ -1877,12 +1881,14 @@ function ApplicationCyclesPanel({
               <div className="space-y-1.5">
                 <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Submission date</div>
                 <Input
-                  value={editTarget.row.submissionDate}
+                  type="date"
+                  value={submissionDateIsoForPicker(editTarget.row.submissionDate)}
                   onChange={(e) =>
-                    setEditTarget((t) => (t ? { ...t, row: { ...t.row, submissionDate: e.target.value } } : t))
+                    setEditTarget((t) =>
+                      t ? { ...t, row: { ...t.row, submissionDate: e.target.value ? e.target.value : "—" } } : t,
+                    )
                   }
-                  className={appFieldInputClass}
-                  placeholder="e.g. Mar 14, 2026 or —"
+                  className={cn(appFieldInputClass, "font-mono")}
                 />
               </div>
               <div className="space-y-1.5">
@@ -2145,7 +2151,7 @@ function opportunityPipelineFromCycles(cycles: AppCycle[]): { title: string; des
     desc: `${r.kind === "LOI" ? "Intent, eligibility, and scope statement." : "Full submission packet and attachments."} Tracked in Applications.`,
     meta:
       r.submissionDate && r.submissionDate !== "—"
-        ? `Submission: ${r.submissionDate} · ${appStatusLabel(r.status)}`
+        ? `Submission: ${formatSubmissionDateDisplay(r.submissionDate)} · ${appStatusLabel(r.status)}`
         : `In workspace · ${appStatusLabel(r.status)}`,
   }))
 }

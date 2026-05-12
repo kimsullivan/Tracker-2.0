@@ -29,6 +29,7 @@ import {
   findInProgressProposalTarget,
   patchAppCycleRow,
   seedAppCycles,
+  formatSubmissionDateDisplay,
   type AppCycle,
 } from "@/lib/manage/application-cycles"
 
@@ -161,7 +162,9 @@ export function UploadApplicationDialog({
       toast.error("Could not update the application row (demo).")
       return
     }
-    toast.success("Submission recorded", { description: `${fileName} · ${d}` })
+    toast.success("Submission recorded", {
+      description: `${fileName} · ${formatSubmissionDateDisplay(d)}`,
+    })
     reset()
     onOpenChange(false)
   }
@@ -187,10 +190,10 @@ export function UploadApplicationDialog({
               Submission date
             </div>
             <Input
+              type="date"
               value={date}
               onChange={(e) => setDate(e.target.value)}
-              placeholder="e.g. May 15, 2026"
-              className="h-9 text-[13px]"
+              className="h-9 text-[13px] font-mono"
             />
           </div>
           <div className="space-y-1.5">

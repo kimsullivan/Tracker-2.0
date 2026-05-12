@@ -10,6 +10,7 @@ export type AppCycleRow = {
   kind: AppDocKind
   status: AppSubmissionStatus
   ownerId: string
+  /** ISO calendar date `YYYY-MM-DD`, or em dash when not submitted. */
   submissionDate: string
   lastUpdated: string
 }
@@ -73,7 +74,7 @@ export function seedAppCycles(ownerId: string, grantId?: string): AppCycle[] {
           kind: "LOI",
           status: "submitted",
           ownerId,
-          submissionDate: "Mar 14, 2026",
+          submissionDate: "2026-03-14",
           lastUpdated: "Mar 14, 2026",
         },
         {
@@ -100,7 +101,7 @@ export function seedAppCycles(ownerId: string, grantId?: string): AppCycle[] {
           kind: "Proposal",
           status: "submitted",
           ownerId,
-          submissionDate: "Jun 18, 2025",
+          submissionDate: "2025-06-18",
           lastUpdated: "Jun 20, 2025",
         },
       ],
@@ -171,4 +172,35 @@ export function findInProgressProposalTarget(cycles: AppCycle[]): { cycleId: str
     if (r) return { cycleId: c.id, rowId: r.id }
   }
   return null
+}
+
+/** Applications table: submission stored as YYYY-MM-DD or legacy prose, or "—". */
+export function formatSubmissionDateDisplay(raw: string): string {
+  const s = raw.trim()
+  if (!s || s === "—") return "—"
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (m) {
+    const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
+    if (Number.isNaN(d.getTime())) return raw
+    return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+  }
+  const t = Date.parse(s)
+  if (Number.isNaN(t)) return raw
+  const d = new Date(t)
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+}
+
+/** Value for `<input type="date" />` (YYYY-MM-DD) or "" when unset / em dash. */
+export function submissionDateIsoForPicker(raw: string): string {
+  const s = raw.trim()
+  if (!s || s === "—") return ""
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (m) return s
+  const t = Date.parse(s)
+  if (Number.isNaN(t)) return ""
+  const d = new Date(t)
+  const y = d.getFullYear()
+  const mo = String(d.getMonth() + 1).padStart(2, "0")
+  const day = String(d.getDate()).padStart(2, "0")
+  return `${y}-${mo}-${day}`
 }
