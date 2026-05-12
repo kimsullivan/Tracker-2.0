@@ -188,7 +188,7 @@ export function Greeting({
     <div className="flex flex-col gap-1.5">
       <div className="flex flex-wrap items-baseline gap-3">
         <h1 className="m-0 text-[26px] font-semibold tracking-[-0.025em] text-foreground">
-          Good morning, <span className="text-primary">{firstName}</span>
+          Good morning, {firstName}
         </h1>
         {showDate ? <span className="text-xs text-muted-foreground">· {date}</span> : null}
       </div>
