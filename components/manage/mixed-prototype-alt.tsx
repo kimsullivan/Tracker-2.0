@@ -131,7 +131,10 @@ export function MixedPrototypeAlt() {
   const pipelineInsightInitialMessages = useMemo(() => getPipelineInsightInitialMessages(), [])
 
   /** Pulse / Board bridge KPIs for Instrumentl built-ins and user saves that share the same lens (`all`, Board, Funder). */
-  const operatorKpiLensSlices = useMemo(() => new Set(["all", "board-leadership", "funder-portfolio"]), [])
+  const operatorKpiLensSlices = useMemo(
+    () => new Set(["all", "board-leadership", "funder-portfolio", "funder-portfolio-v2"]),
+    [],
+  )
   const showOperatorKpiStrip =
     INSTRUMENTL_CANNED_VIEW_IDS.has(operatorViewId) ||
     (operatorViewId.startsWith("custom-") && operatorKpiLensSlices.has(operatorBuiltinSlice))
@@ -516,7 +519,8 @@ export function MixedPrototypeAlt() {
                                       />
                                     </div>
                                   )
-                                : operatorBuiltinSlice === "funder-portfolio"
+                                : operatorBuiltinSlice === "funder-portfolio" ||
+                                    operatorBuiltinSlice === "funder-portfolio-v2"
                                   ? null
                                   : (
                                       <>
@@ -550,7 +554,9 @@ export function MixedPrototypeAlt() {
                               setPipelineFourthMetric(c.pipelineFourthMetric ?? "winrate")
                           }}
                           kpiBridgeFilter={
-                            !showOperatorKpiStrip || operatorBuiltinSlice === "funder-portfolio"
+                            !showOperatorKpiStrip ||
+                            operatorBuiltinSlice === "funder-portfolio" ||
+                            operatorBuiltinSlice === "funder-portfolio-v2"
                               ? null
                               : kpiDrill
                                 ? (g) => passesKpiDrill(kpiDrill, g)

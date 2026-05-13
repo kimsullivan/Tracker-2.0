@@ -8,10 +8,11 @@ export function fiscalYearWindow(fyJuneYear: number): { start: Date; end: Date }
   return { start, end }
 }
 
-export type TimeRangePresetId = "ytd" | "mtd" | "fy2025" | "fy2024" | "t12m" | "t90d" | "custom"
+export type TimeRangePresetId = "all" | "ytd" | "mtd" | "fy2025" | "fy2024" | "t12m" | "t90d" | "custom"
 
 /** Dropdown labels only (logic lives in `grantDeadlineMatchesTimeRange`). */
 export const TIME_RANGE_MENU: { id: TimeRangePresetId; label: string }[] = [
+  { id: "all", label: "All time" },
   { id: "ytd", label: "This year (YTD)" },
   { id: "mtd", label: "This month" },
   { id: "fy2025", label: "FY 2025" },
@@ -71,6 +72,10 @@ export function grantDeadlineMatchesTimeRange(
 ): boolean {
   const preset = filters.timeRangePreset ?? "ytd"
 
+  if (preset === "all") {
+    return true
+  }
+
   if (preset === "ytd") {
     const y = now.getFullYear()
     const start = new Date(y, 0, 1)
@@ -125,6 +130,7 @@ export function grantDeadlineMatchesTimeRange(
 
 export function timeRangeExportSuffix(filters: Record<string, string | null>, now: Date): string {
   const preset = filters.timeRangePreset ?? "ytd"
+  if (preset === "all") return "All time"
   if (preset === "custom") {
     const a = filters.timeRangeCustomStart
     const b = filters.timeRangeCustomEnd

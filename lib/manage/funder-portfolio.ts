@@ -35,7 +35,8 @@ export function filterGrantsByPeriodYtd(source: Grant[], periodYtd: string | nul
   return source.filter((g) => grantDeadlineInCalendarYear(g.deadline, y))
 }
 
-function dominantFunderType(gl: Grant[]): FunderType {
+export function dominantFunderTypeFromGrants(gl: Grant[]): FunderType {
+  if (gl.length === 0) return "Federal"
   const counts = new Map<FunderType, number>()
   for (const g of gl) {
     counts.set(g.funderType, (counts.get(g.funderType) ?? 0) + 1)
@@ -123,7 +124,7 @@ export function aggregateFunderRows(grants: Grant[], now: Date): FunderPortfolio
     rows.push({
       key: funder,
       funder,
-      funderType: dominantFunderType(gl),
+      funderType: dominantFunderTypeFromGrants(gl),
       grants: gl,
       grantsCount: gl.length,
       totalAwarded,

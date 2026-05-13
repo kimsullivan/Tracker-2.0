@@ -43,11 +43,26 @@ import {
   applyFunderPortfolioKpiFilters,
   awardedSumGrant,
   DEFAULT_FUNDER_PORTFOLIO_KPI,
+  funderKeyFromGrant,
   pickLastActivityDisplay,
   renewalStatusForGrant,
   type FunderPortfolioKpiState,
 } from "@/lib/manage/funder-portfolio"
 import { PulseStripFunderPortfolio } from "@/components/manage/funder-portfolio-kpi-tiles"
+import { PulseStripFunderCultivation } from "@/components/manage/funder-cultivation-kpi-tiles"
+import {
+  CULTIVATION_STAGE_DISPLAY_ORDER,
+  cadenceLabel,
+  cultivationStageSortIndex,
+  dominantOwnerId,
+  formatFunderLastTouch,
+  groupGrantsByFunder,
+  funderLastTouchSortMs,
+  lifetimeGivingLabel,
+  nextStepForFunder,
+  relationshipStageForFunder,
+  type RelationshipStage,
+} from "@/lib/manage/funder-cultivation"
 import { downloadGrantsCsvReport, downloadGrantsPdfReport } from "@/lib/manage/grants-export"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -93,9 +108,17 @@ export type ColKey =
   /** Funder portfolio saved-view lens — grant-backed cells, portfolio column set only */
   | "fpFunder"
   | "fpFunderType"
+  | "fpGrantsCount"
   | "fpTotalAwarded"
   | "fpLastActivity"
   | "fpRenewalStatus"
+  /** Funder cultivation lens — rollup + grant columns share one header row */
+  | "fcRelationshipStage"
+  | "fcLastTouch"
+  | "fcNextStep"
+  | "fcLifetimeGiving"
+  | "fcCadence"
+  | "fcGrantsWithFunder"
 
 type ColDef = {
   key: ColKey
@@ -129,9 +152,16 @@ const COLUMNS: ColDef[] = [
   { key: "renewal", label: "Renewal", width: "120px", group: "custom", defaultVisible: true },
   { key: "fpFunder", label: "Funder", width: "240px", group: "custom", defaultVisible: false },
   { key: "fpFunderType", label: "Funder type", width: "140px", group: "custom", defaultVisible: false },
+  { key: "fpGrantsCount", label: "Grants count", width: "108px", group: "custom", defaultVisible: false },
   { key: "fpTotalAwarded", label: "Total awarded", width: "140px", group: "custom", defaultVisible: false },
   { key: "fpLastActivity", label: "Last activity", width: "140px", group: "custom", defaultVisible: false },
   { key: "fpRenewalStatus", label: "Renewal status", width: "180px", group: "custom", defaultVisible: false },
+  { key: "fcRelationshipStage", label: "Relationship stage", width: "168px", group: "custom", defaultVisible: false },
+  { key: "fcLastTouch", label: "Last touch", width: "168px", group: "custom", defaultVisible: false },
+  { key: "fcNextStep", label: "Next step", width: "220px", group: "custom", defaultVisible: false },
+  { key: "fcLifetimeGiving", label: "Lifetime giving", width: "168px", group: "custom", defaultVisible: false },
+  { key: "fcCadence", label: "Cadence", width: "112px", group: "custom", defaultVisible: false },
+  { key: "fcGrantsWithFunder", label: "Grants w/ funder", width: "120px", group: "custom", defaultVisible: false },
 ]
 
 /** All column keys except Grant — Grant stays pinned first; these may be reordered. */
@@ -165,6 +195,35 @@ const FUNDER_PORTFOLIO_TABLE_COL_ORDER: ColKey[] = [
   "priority",
 ]
 
+/** Funder cultivation: one header row — rollup funder metrics + standard grant columns. */
+const FUNDER_CULTIVATION_COL_ORDER: ColKey[] = [
+  "grant",
+  "fcRelationshipStage",
+  "fcLastTouch",
+  "fcNextStep",
+  "fcLifetimeGiving",
+  "fcCadence",
+  "fcGrantsWithFunder",
+  "status",
+  "deadline",
+  "owner",
+  "award",
+]
+
+const CULTIVATION_COLUMN_HEADERS: Partial<Record<ColKey, string>> = {
+  grant: "Funder & grant",
+  fcRelationshipStage: "Relationship stage",
+  fcLastTouch: "Last touch",
+  fcNextStep: "Next step",
+  fcLifetimeGiving: "Lifetime giving",
+  fcCadence: "Cadence",
+  fcGrantsWithFunder: "Grants w/ funder",
+  status: "Grant status",
+  deadline: "Deadline",
+  owner: "Relationship owner",
+  award: "Award",
+}
+
 const DND_COLUMN_MIME = "application/x-ccn-grant-col"
 
 function reorderColumns(order: ColKey[], from: ColKey, to: ColKey): ColKey[] {
@@ -196,7 +255,15 @@ function placeColumnBeforeKey(order: ColKey[], moved: ColKey, before: ColKey): C
   return placeColumnAfter(order, moved, order[idx - 1]!)
 }
 
-export type GroupBy = "stage" | "owner" | "funderType" | "funder" | "projectGroup" | "deadline" | "none"
+export type GroupBy =
+  | "stage"
+  | "owner"
+  | "funderType"
+  | "funder"
+  | "projectGroup"
+  | "deadline"
+  | "cultivationStage"
+  | "none"
 
 const GROUP_BY_EXPORT_LABEL: Record<GroupBy, string | null> = {
   stage: "Stage",
@@ -205,6 +272,7 @@ const GROUP_BY_EXPORT_LABEL: Record<GroupBy, string | null> = {
   funder: "Funder",
   projectGroup: "Project group",
   deadline: "Deadline month",
+  cultivationStage: "Cultivation stage",
   none: null,
 }
 
@@ -272,6 +340,8 @@ function sortValueForColumn(g: Grant, key: ColKey): string | number {
       return g.funder.toLowerCase()
     case "fpFunderType":
       return g.funderType.toLowerCase()
+    case "fpGrantsCount":
+      return 0
     case "fpTotalAwarded":
       return awardedSumGrant(g)
     case "fpLastActivity":
@@ -336,6 +406,7 @@ const SAVED_VIEWS = [
   { id: "all", label: "All active" },
   { id: "board-leadership", label: "Board / Leadership" },
   { id: "funder-portfolio", label: "Funder portfolio" },
+  { id: "funder-portfolio-v2", label: "Funder cultivation" },
   { id: "q2-apps", label: "Q2 applications" },
   { id: "fed-100k", label: "Federal > $100K" },
   { id: "at-risk", label: "At-risk reports" },
@@ -344,7 +415,12 @@ const SAVED_VIEWS = [
 ]
 
 /** First three pipeline lenses — prebuilt Instrumentl views (vs. sample rows + user-saved below). */
-export const INSTRUMENTL_CANNED_VIEW_IDS = new Set<string>(["all", "board-leadership", "funder-portfolio"])
+export const INSTRUMENTL_CANNED_VIEW_IDS = new Set<string>([
+  "all",
+  "board-leadership",
+  "funder-portfolio",
+  "funder-portfolio-v2",
+])
 
 /** Labels minted by the old ephemeral fork flow — drop from saved pickers (dedupe built-ins). */
 const OPERATOR_EPHEMERAL_WORKING_LABELS = new Set(SAVED_VIEWS.map((v) => `Working · ${v.label}`))
@@ -434,6 +510,12 @@ export type AllGrantsFilterApi = {
   /** Operator: same export as View menu PDF/CSV; `silent` skips success toasts (e.g. chat card is enough). */
   exportLensReport: (format: "pdf" | "csv", opts?: { silent?: boolean }) => void
 }
+
+/** Operator · Funder cultivation — paper-white table (expandable rows + nested grants). */
+const CULTIVATION_TABLE_BG = "bg-white dark:bg-card"
+const CULTIVATION_TABLE_ROW = "bg-white hover:bg-zinc-50/90 dark:bg-card dark:hover:bg-muted/40"
+const CULTIVATION_TABLE_ROW_STICKY =
+  "bg-white group-hover/grprow:bg-zinc-50/90 dark:bg-card dark:group-hover/grprow:bg-muted/40"
 
 export function AllGrants({
   onOpenGrant,
@@ -525,6 +607,8 @@ export function AllGrants({
   const [grants, setGrants] = useState<Grant[]>(grantsData)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
+  /** `stageKey::funderKey` — when present, that funder's grants are collapsed under cultivation view. */
+  const [collapsedCultivationFunders, setCollapsedCultivationFunders] = useState<Set<string>>(() => new Set())
   const [filters, setFilters] = useState<Record<string, string | null>>(() => ({
     ...defaultTimeRangeFilterPatch(),
     funderType: null,
@@ -558,7 +642,8 @@ export function AllGrants({
   const viewPickerGroups = useMemo(() => {
     const filtered = SAVED_VIEWS.filter(
       (v) =>
-        variant === "operator" || (v.id !== "board-leadership" && v.id !== "funder-portfolio"),
+        variant === "operator" ||
+        (v.id !== "board-leadership" && v.id !== "funder-portfolio" && v.id !== "funder-portfolio-v2"),
     )
     return {
       instrumentl: filtered.filter((v) => INSTRUMENTL_CANNED_VIEW_IDS.has(v.id)),
@@ -567,7 +652,12 @@ export function AllGrants({
   }, [variant])
 
   const boardAudience = variant === "operator" && builtinSlice === "board-leadership"
-  const funderPortfolioLens = variant === "operator" && builtinSlice === "funder-portfolio"
+  const funderPortfolioLens =
+    variant === "operator" &&
+    (builtinSlice === "funder-portfolio" || builtinSlice === "funder-portfolio-v2")
+  const funderPortfolioV2Lens = variant === "operator" && builtinSlice === "funder-portfolio-v2"
+  /** Funder cultivation (v2 + relationship stage groups): paper-white table chrome. */
+  const cultivationWhiteTable = funderPortfolioV2Lens && groupBy === "cultivationStage"
 
   const router = useRouter()
   const pathname = usePathname()
@@ -614,6 +704,29 @@ export function AllGrants({
     setFilterBaseline({ ...nextFilters })
   }, [])
 
+  const applyFunderPortfolioV2Preset = useCallback(() => {
+    setGroupBy("cultivationStage")
+    setSortKey("fcLastTouch")
+    setSortDir("asc")
+    setFpKpi({ ...DEFAULT_FUNDER_PORTFOLIO_KPI })
+    setFpKpiBaseline({ ...DEFAULT_FUNDER_PORTFOLIO_KPI })
+    const v2Order = [...FUNDER_CULTIVATION_COL_ORDER] as ColKey[]
+    const v2Vis = new Set<ColKey>(v2Order)
+    setVisibleCols(v2Vis)
+    setColOrder(v2Order)
+    setColumnLayoutBaseline(snapshotOperatorColumnLayout(v2Vis, v2Order))
+    const nextFilters: Record<string, string | null> = migrateToolbarTimeRangeFilters({
+      ...defaultTimeRangeFilterPatch(),
+      timeRangePreset: "all",
+      timeRangeCustomStart: null,
+      timeRangeCustomEnd: null,
+      funderType: null,
+      owner: null,
+    })
+    setFilters(nextFilters)
+    setFilterBaseline({ ...nextFilters })
+  }, [])
+
   const resetOperatorTableDefaults = useCallback(() => {
     setGroupBy("stage")
     setSortKey(null)
@@ -628,6 +741,7 @@ export function AllGrants({
   }, [])
 
   const tableScrollRef = useRef<HTMLDivElement>(null)
+  const prevBuiltinForRollupCollapseRef = useRef<string>("")
   const tableHeaderHorizRef = useRef<HTMLDivElement>(null)
   const horizSyncLock = useRef(false)
   const toggleStickyMeasRef = useRef<HTMLDivElement>(null)
@@ -780,8 +894,22 @@ export function AllGrants({
 
   const fpFiltered = useMemo(() => {
     if (!funderPortfolioLens) return afterBridge
+    if (funderPortfolioV2Lens) return afterBridge
     return applyFunderPortfolioKpiFilters(afterBridge, fpKpi, portfolioNow)
-  }, [funderPortfolioLens, afterBridge, fpKpi, portfolioNow])
+  }, [funderPortfolioLens, funderPortfolioV2Lens, afterBridge, fpKpi, portfolioNow])
+
+  /** Roll-up lens: KPI strip stays YTD-anchored while the table uses “all time” by default. */
+  const funderPortfolioKpiGrants = useMemo(() => {
+    if (!funderPortfolioV2Lens) return filteredBase
+    return filteredBase.filter((g) =>
+      grantDeadlineMatchesTimeRange(
+        g.deadline,
+        { ...filters, timeRangePreset: "ytd" },
+        portfolioNow,
+        g.stage,
+      ),
+    )
+  }, [funderPortfolioV2Lens, filteredBase, filters, portfolioNow])
 
   useEffect(() => {
     onFilteredBaseChange?.(filteredBase)
@@ -801,10 +929,70 @@ export function AllGrants({
   }, [variant, selectedViewId, customViews, onViewLabelChange, operatorBuiltinAllLabel])
 
   const sortedFiltered = useMemo(() => {
-    if (funderPortfolioLens) return fpFiltered
-    if (!sortKey) return afterBridge
-    return [...afterBridge].sort((a, b) => compareGrantRows(a, b, sortKey, sortDir))
-  }, [funderPortfolioLens, fpFiltered, afterBridge, sortKey, sortDir])
+    if (!funderPortfolioLens) {
+      if (!sortKey) return afterBridge
+      return [...afterBridge].sort((a, b) => compareGrantRows(a, b, sortKey, sortDir))
+    }
+    if (funderPortfolioV2Lens) {
+      const base = fpFiltered
+      const byF = groupGrantsByFunder(base)
+      const effKey = sortKey ?? "fcLastTouch"
+      const effDir = sortKey ? sortDir : "asc"
+      const funderSortKeys = new Set<ColKey>([
+        "fcLastTouch",
+        "fcRelationshipStage",
+        "fcLifetimeGiving",
+        "fcCadence",
+        "fcNextStep",
+        "fcGrantsWithFunder",
+      ])
+      const funderAwardTotal = (gl: Grant[]) => gl.reduce((s, x) => s + awardedSumGrant(x), 0)
+
+      return [...base].sort((a, b) => {
+        const ka = funderKeyFromGrant(a)
+        const kb = funderKeyFromGrant(b)
+        const ga = byF.get(ka)!
+        const gb = byF.get(kb)!
+
+        if (funderSortKeys.has(effKey)) {
+          let cmp = 0
+          switch (effKey) {
+            case "fcLastTouch":
+              cmp = funderLastTouchSortMs(ga, portfolioNow) - funderLastTouchSortMs(gb, portfolioNow)
+              break
+            case "fcRelationshipStage":
+              cmp =
+                cultivationStageSortIndex(relationshipStageForFunder(ga, portfolioNow)) -
+                cultivationStageSortIndex(relationshipStageForFunder(gb, portfolioNow))
+              break
+            case "fcLifetimeGiving":
+              cmp = funderAwardTotal(ga) - funderAwardTotal(gb)
+              break
+            case "fcCadence":
+              cmp = cadenceLabel(ga).localeCompare(cadenceLabel(gb))
+              break
+            case "fcNextStep": {
+              const na = nextStepForFunder(ga, portfolioNow)
+              const nb = nextStepForFunder(gb, portfolioNow)
+              cmp = (na?.line ?? "").localeCompare(nb?.line ?? "")
+              break
+            }
+            case "fcGrantsWithFunder":
+              cmp = ga.length - gb.length
+              break
+          }
+          if (cmp !== 0) return effDir === "asc" ? cmp : -cmp
+        } else {
+          return compareGrantRows(a, b, effKey, effDir)
+        }
+
+        const c = ka.localeCompare(kb)
+        if (c !== 0) return c
+        return a.id.localeCompare(b.id)
+      })
+    }
+    return fpFiltered
+  }, [funderPortfolioLens, funderPortfolioV2Lens, fpFiltered, afterBridge, sortKey, sortDir, portfolioNow])
 
   useEffect(() => {
     const onScroll = () => updateTableScrollShadows()
@@ -835,17 +1023,48 @@ export function AllGrants({
   )
 
   const fpKpiDirty = useMemo(() => {
-    if (!funderPortfolioLens) return false
+    if (!funderPortfolioLens || funderPortfolioV2Lens) return false
     return (
       fpKpi.topFundersOnly !== fpKpiBaseline.topFundersOnly ||
       fpKpi.multiYearOnly !== fpKpiBaseline.multiYearOnly
     )
-  }, [funderPortfolioLens, fpKpi, fpKpiBaseline])
+  }, [funderPortfolioLens, funderPortfolioV2Lens, fpKpi, fpKpiBaseline])
 
   const showSaveViewChip = variant === "operator" && (filtersDirty || fpKpiDirty || columnsDirty)
 
   const grouped = useMemo(() => {
     if (groupBy === "none") return [{ key: "All grants", items: sortedFiltered }]
+    if (groupBy === "cultivationStage") {
+      const byF = groupGrantsByFunder(sortedFiltered)
+      const stageByFunder = new Map<string, RelationshipStage>()
+      for (const [fk, gl] of byF) {
+        stageByFunder.set(fk, relationshipStageForFunder(gl, portfolioNow))
+      }
+      const byStage = new Map<string, Grant[]>()
+      for (const s of CULTIVATION_STAGE_DISPLAY_ORDER) byStage.set(s, [])
+      for (const g of sortedFiltered) {
+        const fk = funderKeyFromGrant(g)
+        const st = stageByFunder.get(fk) ?? "Prospect"
+        byStage.get(st)!.push(g)
+      }
+      const entries = CULTIVATION_STAGE_DISPLAY_ORDER.map((s) => [s, [...(byStage.get(s) ?? [])]] as const).filter(
+        ([, items]) => items.length > 0,
+      )
+      const sortedEntries = entries.map(([s, items]) => {
+        const sortedItems = [...items].sort((a, b) => {
+          const ga = byF.get(funderKeyFromGrant(a))!
+          const gb = byF.get(funderKeyFromGrant(b))!
+          const ta = funderLastTouchSortMs(ga, portfolioNow)
+          const tb = funderLastTouchSortMs(gb, portfolioNow)
+          if (ta !== tb) return ta - tb
+          const c = funderKeyFromGrant(a).localeCompare(funderKeyFromGrant(b))
+          if (c !== 0) return c
+          return a.id.localeCompare(b.id)
+        })
+        return [s, sortedItems] as const
+      })
+      return sortedEntries.map(([key, items]) => ({ key, items }))
+    }
     const map = new Map<string, Grant[]>()
     if (groupBy === "stage") {
       for (const stage of stageOrder) map.set(stage, [])
@@ -881,7 +1100,26 @@ export function AllGrants({
       })
     }
     return entries.map(([key, items]) => ({ key, items }))
-  }, [sortedFiltered, groupBy])
+  }, [sortedFiltered, groupBy, portfolioNow])
+
+  useLayoutEffect(() => {
+    if (builtinSlice !== "funder-portfolio-v2" || groupBy !== "cultivationStage") {
+      prevBuiltinForRollupCollapseRef.current = builtinSlice
+      return
+    }
+    const prev = prevBuiltinForRollupCollapseRef.current
+    prevBuiltinForRollupCollapseRef.current = builtinSlice
+    if (prev === "funder-portfolio-v2") return
+    const keys = new Set<string>()
+    for (const g of grouped) {
+      const byF = groupGrantsByFunder(g.items)
+      for (const fk of byF.keys()) {
+        keys.add(`${g.key}::${fk}`)
+      }
+    }
+    setCollapsedCultivationFunders(keys)
+    setCollapsedGroups(new Set())
+  }, [builtinSlice, groupBy, grouped])
 
   useEffect(() => {
     updateTableScrollShadows()
@@ -937,6 +1175,10 @@ export function AllGrants({
         applyFunderPortfolioPreset()
         return
       }
+      if (id === "funder-portfolio-v2") {
+        applyFunderPortfolioV2Preset()
+        return
+      }
       resetOperatorTableDefaults()
       setFilters((prev) => {
         const next = applyViewFilters(id, prev)
@@ -944,7 +1186,7 @@ export function AllGrants({
         return next
       })
     },
-    [variant, customViews, applyBoardLeadershipPreset, applyFunderPortfolioPreset, resetOperatorTableDefaults, applyOperatorViewConfig],
+    [variant, customViews, applyBoardLeadershipPreset, applyFunderPortfolioPreset, applyFunderPortfolioV2Preset, resetOperatorTableDefaults, applyOperatorViewConfig],
   )
 
   const forkIfCannedOperatorEdit = useCallback(() => {
@@ -988,7 +1230,7 @@ export function AllGrants({
   )
 
   function handleSortColumn(key: ColKey) {
-    if (funderPortfolioLens) return
+    if (funderPortfolioLens && !funderPortfolioV2Lens) return
     forkIfCannedOperatorEdit()
     if (sortKey !== key) {
       setSortKey(key)
@@ -1012,6 +1254,15 @@ export function AllGrants({
       const next = new Set(prev)
       if (next.has(key)) next.delete(key)
       else next.add(key)
+      return next
+    })
+  }
+
+  function toggleCultivationFunderRow(compositeKey: string) {
+    setCollapsedCultivationFunders((prev) => {
+      const next = new Set(prev)
+      if (next.has(compositeKey)) next.delete(compositeKey)
+      else next.add(compositeKey)
       return next
     })
   }
@@ -1116,7 +1367,7 @@ export function AllGrants({
       if (boardAudience) {
         base = `Board / Leadership · ${periodLabel}`
       } else if (funderPortfolioLens) {
-        base = `Funder portfolio · ${periodLabel}`
+        base = funderPortfolioV2Lens ? `Cultivation portfolio · ${periodLabel}` : `Funder portfolio · ${periodLabel}`
       } else {
         const viewName = operatorBuiltinAllLabel ?? "All active"
         base = `${viewName} · ${periodLabel}`
@@ -1182,6 +1433,7 @@ export function AllGrants({
     [
       boardAudience,
       funderPortfolioLens,
+      funderPortfolioV2Lens,
       filters,
       portfolioNow,
       operatorBuiltinAllLabel,
@@ -1257,16 +1509,29 @@ export function AllGrants({
 
   /** Funder portfolio KPI strip only for the built-in Instrumentl lens — not sample or user-saved views. */
   const funderPortfolioKpiInner =
-    variant === "operator" && funderPortfolioLens && selectedViewId === "funder-portfolio" ? (
+    variant === "operator" && funderPortfolioLens && builtinSlice === "funder-portfolio" ? (
       <PulseStripFunderPortfolio
-        grantsScoped={filteredBase}
-        grantsFull={grantsData}
+        grantsScoped={funderPortfolioKpiGrants}
+        grantsFull={grants}
         anchorYear={fpAnchorYear}
         kpi={fpKpi}
         onKpiChange={(next) => {
           forkIfCannedOperatorEdit()
           setFpKpi(next)
         }}
+        selectedFunderType={(filters.funderType as FunderType | null) ?? null}
+        onFunderTypeChange={(ft) => {
+          forkIfCannedOperatorEdit()
+          setFilters((prev) => ({ ...prev, funderType: ft }))
+        }}
+      />
+    ) : variant === "operator" && funderPortfolioV2Lens ? (
+      <PulseStripFunderCultivation
+        grantsKpi={funderPortfolioKpiGrants}
+        grantsLifetime={filteredBase}
+        grantsFull={grants}
+        anchorYear={fpAnchorYear}
+        now={portfolioNow}
         selectedFunderType={(filters.funderType as FunderType | null) ?? null}
         onFunderTypeChange={(ft) => {
           forkIfCannedOperatorEdit()
@@ -1363,11 +1628,71 @@ export function AllGrants({
           <TimeRangeFilterChip
             filters={filters}
             now={portfolioNow}
+            periodBaselinePreset={funderPortfolioV2Lens ? "all" : "ytd"}
+            periodResetPatch={
+              funderPortfolioV2Lens
+                ? migrateToolbarTimeRangeFilters({
+                    ...defaultTimeRangeFilterPatch(),
+                    timeRangePreset: "all",
+                    timeRangeCustomStart: null,
+                    timeRangeCustomEnd: null,
+                  })
+                : undefined
+            }
             onPatch={(patch) => {
               forkIfCannedOperatorEdit()
               setFilters((prev) => ({ ...prev, ...patch }))
             }}
           />
+          {(funderPortfolioLens &&
+            !funderPortfolioV2Lens &&
+            (fpKpi.topFundersOnly || fpKpi.multiYearOnly || filters.funderType)) ||
+          (funderPortfolioV2Lens && filters.funderType) ? (
+            <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+              {filters.funderType ? (
+                <button
+                  type="button"
+                  title="Clear funder type drill"
+                  onClick={() => {
+                    forkIfCannedOperatorEdit()
+                    setFilters((prev) => ({ ...prev, funderType: null }))
+                  }}
+                  className="inline-flex h-7 max-w-full items-center gap-1 rounded-full border border-primary/30 bg-primary/5 px-2.5 text-[10px] font-medium text-foreground hover:bg-primary/10"
+                >
+                  <span className="truncate">Funder type: {filters.funderType}</span>
+                  <X className="h-3 w-3 shrink-0 opacity-70" aria-hidden />
+                </button>
+              ) : null}
+              {!funderPortfolioV2Lens && fpKpi.topFundersOnly ? (
+                <button
+                  type="button"
+                  title="Clear top funders drill"
+                  onClick={() => {
+                    forkIfCannedOperatorEdit()
+                    setFpKpi((k) => ({ ...k, topFundersOnly: false }))
+                  }}
+                  className="inline-flex h-7 items-center gap-1 rounded-full border border-primary/30 bg-primary/5 px-2.5 text-[10px] font-medium text-foreground hover:bg-primary/10"
+                >
+                  Top 5 funders
+                  <X className="h-3 w-3 shrink-0 opacity-70" aria-hidden />
+                </button>
+              ) : null}
+              {!funderPortfolioV2Lens && fpKpi.multiYearOnly ? (
+                <button
+                  type="button"
+                  title="Clear multi-year drill"
+                  onClick={() => {
+                    forkIfCannedOperatorEdit()
+                    setFpKpi((k) => ({ ...k, multiYearOnly: false }))
+                  }}
+                  className="inline-flex h-7 items-center gap-1 rounded-full border border-primary/30 bg-primary/5 px-2.5 text-[10px] font-medium text-foreground hover:bg-primary/10"
+                >
+                  Multi-year relationship: Yes
+                  <X className="h-3 w-3 shrink-0 opacity-70" aria-hidden />
+                </button>
+              ) : null}
+            </div>
+          ) : null}
           <FilterChip
             label="Funder type"
             value={filters.funderType}
@@ -1403,6 +1728,7 @@ export function AllGrants({
               forkIfCannedOperatorEdit()
               setGroupBy(v)
             }}
+            showCultivationStageOption={funderPortfolioV2Lens || groupBy === "cultivationStage"}
           />
         </div>
 
@@ -1518,18 +1844,27 @@ export function AllGrants({
           ?         pageStickyBands.railMount
             ? cn(
                 "min-w-full w-max shrink-0 self-start border-b-0",
-                variant === "operator" && "border-t-0 bg-transparent dark:bg-transparent",
+                variant === "operator" &&
+                  (cultivationWhiteTable
+                    ? cn("border-t-0", CULTIVATION_TABLE_BG)
+                    : "border-t-0 bg-transparent dark:bg-transparent"),
               )
             : cn(
                 "sticky z-[45] min-w-full w-max shrink-0 self-start transition-[background-color,border-color]",
                 pageStickyBands.stuck
-                  ? "border-b border-border bg-background/95 backdrop-blur-sm dark:bg-background/95"
+                  ? cultivationWhiteTable
+                    ? "border-b border-border bg-white/95 backdrop-blur-sm dark:bg-card/95"
+                    : "border-b border-border bg-background/95 backdrop-blur-sm dark:bg-background/95"
                   : "border-b border-transparent bg-transparent dark:bg-transparent",
               )
           : cn(
               "z-40 border-b border-border",
               variant === "operator" && "border-t-0",
-              variant === "operator" ? "bg-transparent dark:bg-card/40" : "bg-muted",
+              variant === "operator"
+                ? cultivationWhiteTable
+                  ? cn(CULTIVATION_TABLE_BG)
+                  : "bg-transparent dark:bg-card/40"
+                : "bg-muted",
             ),
       )}
       style={{
@@ -1545,9 +1880,15 @@ export function AllGrants({
                 "border-r-0",
                 pageStickyBands
                   ? pageStickyBands.stuck
-                    ? "bg-background/95 dark:bg-background/95"
-                    : "bg-background dark:bg-background"
-                  : "bg-background dark:bg-background",
+                    ? cultivationWhiteTable
+                      ? "bg-white/95 dark:bg-card/95"
+                      : "bg-background/95 dark:bg-background/95"
+                    : cultivationWhiteTable
+                      ? CULTIVATION_TABLE_BG
+                      : "bg-background dark:bg-background"
+                  : cultivationWhiteTable
+                    ? CULTIVATION_TABLE_BG
+                    : "bg-background dark:bg-background",
                 showPinnedScrollShadow
                   ? "z-[33] shadow-[3px_0_10px_-2px_rgba(0,0,0,0.07)] dark:shadow-[3px_0_10px_-2px_rgba(0,0,0,0.2)]"
                   : "z-[32] shadow-none",
@@ -1567,7 +1908,13 @@ export function AllGrants({
         <SortableColumnHeader
           key={c.key}
           col={c}
-          headerLabel={boardAudience ? BOARD_COLUMN_HEADERS[c.key] : undefined}
+          headerLabel={
+            boardAudience
+              ? BOARD_COLUMN_HEADERS[c.key]
+              : funderPortfolioV2Lens
+                ? CULTIVATION_COLUMN_HEADERS[c.key]
+                : undefined
+          }
           sortKey={sortKey}
           sortDir={sortDir}
           onSort={handleSortColumn}
@@ -1580,6 +1927,8 @@ export function AllGrants({
             pageStickyBands ? (pageStickyBands.stuck ? "solid" : "clear") : "default"
           }
           funderPortfolioLens={funderPortfolioLens}
+          funderPortfolioCultivationLens={funderPortfolioV2Lens}
+          cultivationWhiteTable={cultivationWhiteTable}
         />
       ))}
     </div>
@@ -1593,10 +1942,27 @@ export function AllGrants({
         const sumAward = group.items.reduce((s, g) => s + g.award, 0)
         const sumWeighted = group.items.reduce((s, g) => s + (g.weighted ?? 0), 0)
         const sumPortfolioAwarded = group.items.reduce((s, g) => s + awardedSumGrant(g), 0)
+        const cultivationFunderEntries =
+          funderPortfolioV2Lens && groupBy === "cultivationStage"
+            ? [...groupGrantsByFunder(group.items).entries()].sort(([ka, ga], [kb, gb]) => {
+                const ta = funderLastTouchSortMs(ga, portfolioNow)
+                const tb = funderLastTouchSortMs(gb, portfolioNow)
+                if (ta !== tb) return ta - tb
+                return ka.localeCompare(kb)
+              })
+            : null
         return (
           <div key={group.key}>
             {groupBy !== "none" &&
-              (funderPortfolioLens && groupBy === "funder" ? (
+              (funderPortfolioV2Lens && groupBy === "cultivationStage" ? (
+                <CultivationStageGroupHeader
+                  stage={group.key as RelationshipStage}
+                  funderCount={new Set(group.items.map((g) => funderKeyFromGrant(g))).size}
+                  grantCount={group.items.length}
+                  collapsed={collapsed}
+                  onToggle={() => toggleGroup(group.key)}
+                />
+              ) : funderPortfolioLens && groupBy === "funder" ? (
                 <FunderPortfolioGroupHeader
                   groupKey={group.key}
                   items={group.items}
@@ -1624,7 +1990,10 @@ export function AllGrants({
                         {formatDeadlineMonthGroupLabel(group.key)}
                       </span>
                     )}
-                    {groupBy !== "stage" && groupBy !== "deadline" && (
+                    {groupBy === "cultivationStage" && (
+                      <CultivationStagePill stage={group.key as RelationshipStage} />
+                    )}
+                    {groupBy !== "stage" && groupBy !== "deadline" && groupBy !== "cultivationStage" && (
                       <span className="text-xs font-semibold text-foreground">{group.key}</span>
                     )}
                     <span className="text-[11px] text-muted-foreground">
@@ -1638,21 +2007,78 @@ export function AllGrants({
                 </button>
               ))}
             {!collapsed &&
-              group.items.map((grant) => (
-                <GrantRow
-                  key={grant.id}
-                  grant={grant}
-                  cols={cols}
-                  gridTemplate={gridTemplate}
-                  isSelected={selected.has(grant.id)}
-                  onToggleSelect={() => toggleSelect(grant.id)}
-                  onOpen={() => onOpenGrant(grant.id)}
-                  onUpdate={updateGrant}
-                  variant={variant}
-                  boardAudience={boardAudience}
-                  showPinnedScrollShadow={variant === "operator" && showPinnedScrollShadow}
-                />
-              ))}
+              (cultivationFunderEntries
+                ? cultivationFunderEntries.map(([funderKey, fGrants]) => {
+                    const composite = `${group.key}::${funderKey}`
+                    const fCollapsed = collapsedCultivationFunders.has(composite)
+                    return (
+                      <div key={composite}>
+                        <CultivationFunderRollupRow
+                          funderKey={funderKey}
+                          items={fGrants}
+                          collapsed={fCollapsed}
+                          onToggle={() => toggleCultivationFunderRow(composite)}
+                          cols={cols}
+                          gridTemplate={gridTemplate}
+                          now={portfolioNow}
+                          variant={variant}
+                          boardAudience={boardAudience}
+                          showPinnedScrollShadow={variant === "operator" && showPinnedScrollShadow}
+                          onUpdate={updateGrant}
+                        />
+                        {!fCollapsed &&
+                          fGrants.map((grant) => (
+                            <div
+                              key={grant.id}
+                              className={cn(
+                                "border-l-2 border-violet-400/50 pl-2 dark:border-violet-500/35",
+                                CULTIVATION_TABLE_BG,
+                              )}
+                            >
+                              <GrantRow
+                                grant={grant}
+                                cols={cols}
+                                gridTemplate={gridTemplate}
+                                isSelected={selected.has(grant.id)}
+                                onToggleSelect={() => toggleSelect(grant.id)}
+                                onOpen={() => onOpenGrant(grant.id)}
+                                onUpdate={updateGrant}
+                                variant={variant}
+                                boardAudience={boardAudience}
+                                showPinnedScrollShadow={variant === "operator" && showPinnedScrollShadow}
+                                cultivationFunderGrants={fGrants}
+                                cultivationNow={portfolioNow}
+                              />
+                            </div>
+                          ))}
+                      </div>
+                    )
+                  })
+                : group.items.map((grant) => (
+                    <div
+                      key={grant.id}
+                      className={
+                        cultivationWhiteTable
+                          ? cn("border-l-2 border-violet-400/50 pl-2 dark:border-violet-500/35", CULTIVATION_TABLE_BG)
+                          : funderPortfolioV2Lens
+                            ? "border-l-2 border-violet-400/50 pl-2 dark:border-violet-500/35"
+                            : undefined
+                      }
+                    >
+                      <GrantRow
+                        grant={grant}
+                        cols={cols}
+                        gridTemplate={gridTemplate}
+                        isSelected={selected.has(grant.id)}
+                        onToggleSelect={() => toggleSelect(grant.id)}
+                        onOpen={() => onOpenGrant(grant.id)}
+                        onUpdate={updateGrant}
+                        variant={variant}
+                        boardAudience={boardAudience}
+                        showPinnedScrollShadow={variant === "operator" && showPinnedScrollShadow}
+                      />
+                    </div>
+                  )))}
           </div>
         )
       })}
@@ -1786,7 +2212,9 @@ export function AllGrants({
                   funderPortfolioLens && "border-t-0",
                   dockPins.pinHeader && "overflow-x-hidden",
                   dockPins.pinHeader
-                    ? "bg-background/95 backdrop-blur-sm dark:bg-background/95"
+                    ? cultivationWhiteTable
+                      ? "bg-white/95 backdrop-blur-sm dark:bg-card/95"
+                      : "bg-background/95 backdrop-blur-sm dark:bg-background/95"
                     : "bg-transparent dark:bg-transparent",
                 )}
                 style={dockFixedStyles.header}
@@ -1796,13 +2224,23 @@ export function AllGrants({
                   onScroll={() => syncHorizScroll("header")}
                   className="shadow-bleed-scroll box-border min-w-0 w-full overflow-x-auto overscroll-x-contain"
                 >
-                  <div className="flex min-w-full w-max flex-col">
+                  <div
+                    className={cn(
+                      "flex min-w-full w-max flex-col",
+                      cultivationWhiteTable && CULTIVATION_TABLE_BG,
+                    )}
+                  >
                     {columnHeaderRow({ stuck: dockPins.pinHeader, railMount: true })}
                   </div>
                 </div>
                 {variant === "operator" && showTableRightFade && dockPins.pinHeader ? (
                   <div
-                    className="pointer-events-none absolute inset-y-0 right-0 z-[50] w-28 bg-gradient-to-l from-white from-30% via-white/55 to-transparent dark:from-background dark:via-background/55"
+                    className={cn(
+                      "pointer-events-none absolute inset-y-0 right-0 z-[50] w-28 bg-gradient-to-l to-transparent",
+                      cultivationWhiteTable
+                        ? "from-white from-30% via-white/55 dark:from-card dark:via-card/55"
+                        : "from-white from-30% via-white/55 dark:from-background dark:via-background/55",
+                    )}
                     aria-hidden
                   />
                 ) : null}
@@ -1812,11 +2250,23 @@ export function AllGrants({
                 onScroll={() => syncHorizScroll("body")}
                 className="shadow-bleed-scroll box-border min-w-0 w-full max-w-none shrink-0 self-start overflow-x-auto overscroll-x-contain"
               >
-                <div className="flex min-w-full w-max flex-col">{grantsTableBodyContent}</div>
+                <div
+                  className={cn(
+                    "flex min-w-full w-max flex-col",
+                    cultivationWhiteTable && CULTIVATION_TABLE_BG,
+                  )}
+                >
+                  {grantsTableBodyContent}
+                </div>
               </div>
               {variant === "operator" && showTableRightFade ? (
                 <div
-                  className="pointer-events-none absolute inset-y-0 right-0 z-[35] w-28 bg-gradient-to-l from-white from-30% via-white/55 to-transparent dark:from-background dark:via-background/55"
+                  className={cn(
+                    "pointer-events-none absolute inset-y-0 right-0 z-[35] w-28 bg-gradient-to-l to-transparent",
+                    cultivationWhiteTable
+                      ? "from-white from-30% via-white/55 dark:from-card dark:via-card/55"
+                      : "from-white from-30% via-white/55 dark:from-background dark:via-background/55",
+                  )}
                   aria-hidden
                 />
               ) : null}
@@ -1827,7 +2277,12 @@ export function AllGrants({
             ref={tableScrollRef}
             className={cn("shadow-bleed-scroll h-full min-h-0 min-w-0 w-full overflow-auto overscroll-contain")}
           >
-            <div className="flex w-max flex-col">
+            <div
+              className={cn(
+                "flex w-max flex-col",
+                cultivationWhiteTable && CULTIVATION_TABLE_BG,
+              )}
+            >
               {columnHeaderRow()}
               {grantsTableBodyContent}
             </div>
@@ -1835,7 +2290,12 @@ export function AllGrants({
         )}
         {variant === "operator" && !pageScrollMode && showTableRightFade ? (
           <div
-            className="pointer-events-none absolute inset-y-0 right-0 z-[35] w-28 bg-gradient-to-l from-white from-30% via-white/55 to-transparent dark:from-background dark:via-background/55"
+            className={cn(
+              "pointer-events-none absolute inset-y-0 right-0 z-[35] w-28 bg-gradient-to-l to-transparent",
+              cultivationWhiteTable
+                ? "from-white from-30% via-white/55 dark:from-card dark:via-card/55"
+                : "from-white from-30% via-white/55 dark:from-background dark:via-background/55",
+            )}
             aria-hidden
           />
         ) : null}
@@ -1944,6 +2404,180 @@ function FunderPortfolioGroupHeader({
   )
 }
 
+function cultivationStagePillClass(stage: RelationshipStage): string {
+  switch (stage) {
+    case "Dormant":
+      return "border-red-300/60 bg-red-500/10 text-red-800 dark:border-red-500/35 dark:text-red-100"
+    case "Lapsed":
+      return "border-border bg-zinc-500/10 text-zinc-800 dark:text-zinc-200"
+    case "Cultivating":
+      return "border-purple-300/50 bg-purple-500/12 text-purple-900 dark:border-purple-500/40 dark:text-purple-100"
+    case "Donor — Active":
+      return "border-teal-300/60 bg-teal-600/12 text-teal-900 dark:border-teal-500/40 dark:text-teal-50"
+    case "Donor — Steward":
+      return "border-teal-200/70 bg-teal-500/8 text-teal-800 dark:text-teal-100"
+    case "Prospect":
+      return "border-violet-200/60 bg-violet-500/10 text-violet-900 dark:border-violet-500/30 dark:text-violet-100"
+    default:
+      return "border-border bg-muted text-foreground"
+  }
+}
+
+function CultivationStagePill({ stage }: { stage: RelationshipStage }) {
+  return (
+    <span
+      className={cn(
+        "inline-flex max-w-full items-center rounded-full border px-2.5 py-0.5 text-[10px] font-semibold leading-tight",
+        cultivationStagePillClass(stage),
+      )}
+    >
+      {stage}
+    </span>
+  )
+}
+
+function CultivationStageGroupHeader({
+  stage,
+  funderCount,
+  grantCount,
+  collapsed,
+  onToggle,
+}: {
+  stage: RelationshipStage
+  funderCount: number
+  grantCount: number
+  collapsed: boolean
+  onToggle: () => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-expanded={!collapsed}
+      className={cn(
+        "group/grprow z-30 flex w-max min-w-full flex-nowrap items-center gap-2 border-b border-border px-0 py-0 text-left",
+        CULTIVATION_TABLE_ROW,
+      )}
+    >
+      <span
+        className={cn(
+          "sticky left-[40px] z-[25] ml-[40px] flex shrink-0 items-center gap-2 px-3 py-1.5",
+          CULTIVATION_TABLE_ROW_STICKY,
+        )}
+      >
+        {collapsed ? (
+          <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+        ) : (
+          <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+        )}
+        <CultivationStagePill stage={stage} />
+        <span className="text-[11px] text-muted-foreground">
+          {funderCount} {funderCount === 1 ? "funder" : "funders"} · {grantCount} {grantCount === 1 ? "grant" : "grants"}
+        </span>
+      </span>
+    </button>
+  )
+}
+
+type CultivationCellContext =
+  | { kind: "rollup"; items: Grant[]; funderKey: string; now: Date }
+  | { kind: "grant"; funderGrants: Grant[]; now: Date }
+
+function CultivationFunderRollupRow({
+  funderKey,
+  items,
+  collapsed,
+  onToggle,
+  cols,
+  gridTemplate,
+  now,
+  variant = "operator",
+  boardAudience = false,
+  showPinnedScrollShadow = false,
+  onUpdate,
+}: {
+  funderKey: string
+  items: Grant[]
+  collapsed: boolean
+  onToggle: () => void
+  cols: ColDef[]
+  gridTemplate: string
+  now: Date
+  variant?: "default" | "operator"
+  boardAudience?: boolean
+  showPinnedScrollShadow?: boolean
+  onUpdate: (id: string, patch: Partial<Grant>, fieldLabel: string) => void
+}) {
+  const anchor = items[0]!
+  const op = variant === "operator"
+  const railBg = op ? CULTIVATION_TABLE_ROW : "bg-muted/50"
+  const rowBg = op ? CULTIVATION_TABLE_ROW : "bg-muted/40 hover:bg-muted/60"
+  const grantColShell = cn(
+    "sticky left-[40px] flex min-h-full w-full min-w-[320px] max-w-[320px] flex-col border-r border-border/60",
+    op && showPinnedScrollShadow
+      ? "z-[33] shadow-[3px_0_10px_-2px_rgba(0,0,0,0.07)] dark:shadow-[3px_0_10px_-2px_rgba(0,0,0,0.2)]"
+      : "z-[28]",
+    rowBg,
+  )
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={onToggle}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault()
+          onToggle()
+        }
+      }}
+      aria-expanded={!collapsed}
+      className={cn("group grid w-max cursor-pointer items-stretch border-b border-border/60 transition-colors", rowBg)}
+      style={{ gridTemplateColumns: `40px ${gridTemplate}` }}
+    >
+      <div
+        className={cn(
+          "sticky left-0 z-[32] flex items-center justify-center px-1 py-2.5",
+          op && showPinnedScrollShadow && "z-[33] shadow-[3px_0_10px_-2px_rgba(0,0,0,0.07)] dark:shadow-[3px_0_10px_-2px_rgba(0,0,0,0.2)]",
+          op && !showPinnedScrollShadow && "shadow-none",
+          op ? "border-r-0" : "border-r border-border/60",
+          railBg,
+        )}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          type="button"
+          onClick={onToggle}
+          className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+          aria-label={collapsed ? "Expand grants for funder" : "Collapse grants for funder"}
+        >
+          {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+        </button>
+      </div>
+      {cols.map((c) => (
+        <div
+          key={c.key}
+          className={cn(
+            "relative z-0 min-h-full min-w-0",
+            c.key === "grant" && grantColShell,
+            c.key !== "grant" && "grid grid-cols-[1.75rem_minmax(0,1fr)] items-stretch",
+          )}
+        >
+          {c.key !== "grant" && <span className="block w-7 shrink-0" aria-hidden />}
+          <Cell
+            col={c}
+            grant={anchor}
+            boardAudience={boardAudience}
+            onUpdate={onUpdate}
+            stopPropagation={(e) => e.stopPropagation()}
+            cultivation={{ kind: "rollup", items, funderKey, now }}
+          />
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function GrantRow({
   grant,
   cols,
@@ -1955,6 +2589,8 @@ function GrantRow({
   variant = "default",
   boardAudience = false,
   showPinnedScrollShadow = false,
+  cultivationFunderGrants,
+  cultivationNow,
 }: {
   grant: Grant
   cols: ColDef[]
@@ -1967,13 +2603,18 @@ function GrantRow({
   boardAudience?: boolean
   /** Checkbox + pinned grant column: soft right shadow when scrolled horizontally (operator). */
   showPinnedScrollShadow?: boolean
+  cultivationFunderGrants?: Grant[]
+  cultivationNow?: Date
 }) {
   const op = variant === "operator"
+  const cultivationWhite = Boolean(cultivationFunderGrants && cultivationNow && op)
   const baseCell =
     !isSelected
-      ? op
-        ? "bg-background hover:bg-muted/45 dark:bg-background dark:hover:bg-muted/35"
-        : "bg-card dark:bg-card group-hover:bg-muted dark:group-hover:bg-muted"
+      ? cultivationWhite
+        ? "bg-white hover:bg-zinc-50/90 dark:bg-card dark:hover:bg-muted/40"
+        : op
+          ? "bg-background hover:bg-muted/45 dark:bg-background dark:hover:bg-muted/35"
+          : "bg-card dark:bg-card group-hover:bg-muted dark:group-hover:bg-muted"
       : ""
   const grantColShell = cn(
     "sticky left-[40px] flex min-h-full w-full min-w-[320px] max-w-[320px] flex-col border-r border-border/60",
@@ -1984,6 +2625,11 @@ function GrantRow({
     !isSelected && baseCell,
   )
 
+  const cultivationCtx =
+    cultivationFunderGrants && cultivationNow
+      ? ({ kind: "grant" as const, funderGrants: cultivationFunderGrants, now: cultivationNow } satisfies CultivationCellContext)
+      : undefined
+
   return (
     <div
       onClick={onOpen}
@@ -1991,9 +2637,11 @@ function GrantRow({
         "group grid w-max cursor-pointer items-stretch border-b border-border/60 transition-colors",
         isSelected && "bg-violet-100 dark:bg-violet-950",
         !isSelected &&
-          (op
-            ? "bg-background hover:bg-muted/45 dark:bg-background dark:hover:bg-muted/35"
-            : "bg-card hover:bg-muted dark:bg-card dark:hover:bg-muted"),
+          (cultivationWhite
+            ? "bg-white hover:bg-zinc-50/90 dark:bg-card dark:hover:bg-muted/40"
+            : op
+              ? "bg-background hover:bg-muted/45 dark:bg-background dark:hover:bg-muted/35"
+              : "bg-card hover:bg-muted dark:bg-card dark:hover:bg-muted"),
       )}
       style={{ gridTemplateColumns: `40px ${gridTemplate}` }}
     >
@@ -2026,6 +2674,7 @@ function GrantRow({
             boardAudience={boardAudience}
             onUpdate={onUpdate}
             stopPropagation={(e) => e.stopPropagation()}
+            cultivation={cultivationCtx}
           />
         </div>
       ))}
@@ -2033,23 +2682,34 @@ function GrantRow({
   )
 }
 
+
 function Cell({
   col,
   grant,
   boardAudience,
   onUpdate,
   stopPropagation,
+  cultivation,
 }: {
   col: ColDef
   grant: Grant
   boardAudience?: boolean
   onUpdate: (id: string, patch: Partial<Grant>, fieldLabel: string) => void
   stopPropagation: (e: React.MouseEvent) => void
+  cultivation?: CultivationCellContext
 }) {
   const wrap = "min-w-0 flex-1 px-3 py-2.5 text-xs"
 
   switch (col.key) {
     case "grant":
+      if (cultivation?.kind === "rollup") {
+        return (
+          <div className={cn(wrap, "flex min-h-full min-w-0 flex-col justify-center")}>
+            <div className="truncate text-sm font-semibold text-foreground">{cultivation.funderKey}</div>
+            <div className="text-[10px] text-muted-foreground">Expand for grants</div>
+          </div>
+        )
+      }
       return (
         <div className={cn(wrap, "flex min-h-full min-w-0 flex-col justify-center")}>
           <div className="flex min-w-0 items-center gap-2">
@@ -2075,6 +2735,9 @@ function Cell({
         </div>
       )
     case "status":
+      if (cultivation?.kind === "rollup") {
+        return <div className={cn(wrap, "text-muted-foreground")}>—</div>
+      }
       return (
         <div className={wrap} onClick={stopPropagation}>
           <EditablePicker
@@ -2089,6 +2752,9 @@ function Cell({
         </div>
       )
     case "deadline": {
+      if (cultivation?.kind === "rollup") {
+        return <div className={cn(wrap, "text-right text-muted-foreground")}>—</div>
+      }
       const urgency = grant.daysToDeadline <= 7 ? "crit" : grant.daysToDeadline <= 21 ? "warn" : "ok"
       const lineClass =
         urgency === "crit"
@@ -2117,6 +2783,14 @@ function Cell({
       )
     }
     case "award":
+      if (cultivation?.kind === "rollup") {
+        const t = cultivation.items.reduce((s, x) => s + awardedSumGrant(x), 0)
+        return (
+          <div className={[wrap, "text-right tabular-nums font-semibold text-foreground"].join(" ")}>
+            {fmtBoard$(t)}
+          </div>
+        )
+      }
       return (
         <div className={[wrap, "text-right tabular-nums text-foreground"].join(" ")}>
           ${(grant.award / 1000).toFixed(0)}K
@@ -2133,6 +2807,17 @@ function Cell({
     case "notificationDate":
       return <div className={[wrap, "text-muted-foreground"].join(" ")}>{grant.lastUpdated}</div>
     case "owner":
+      if (cultivation?.kind === "rollup") {
+        const oid = dominantOwnerId(cultivation.items)
+        return (
+          <div className={wrap}>
+            <div className="flex min-w-0 items-center gap-1.5">
+              {oid ? <OwnerAvatar id={oid} size={20} /> : null}
+              <span className="truncate">{oid ? team.find((t) => t.id === oid)?.name.split(" ")[0] : "—"}</span>
+            </div>
+          </div>
+        )
+      }
       return (
         <div className={wrap} onClick={stopPropagation}>
           <EditablePicker
@@ -2234,6 +2919,8 @@ function Cell({
       )
     case "fpFunderType":
       return <div className={wrap + " text-muted-foreground"}>{grant.funderType}</div>
+    case "fpGrantsCount":
+      return <div className={wrap + " text-right tabular-nums text-muted-foreground"}>—</div>
     case "fpTotalAwarded":
       return (
         <div className={[wrap, "text-right tabular-nums text-foreground font-medium"].join(" ")}>
@@ -2246,6 +2933,69 @@ function Cell({
       return (
         <div className={wrap + " text-muted-foreground"}>{renewalStatusForGrant(grant, new Date())}</div>
       )
+    case "fcRelationshipStage": {
+      if (!cultivation) return <div className={wrap}>—</div>
+      const stage =
+        cultivation.kind === "rollup"
+          ? relationshipStageForFunder(cultivation.items, cultivation.now)
+          : relationshipStageForFunder(cultivation.funderGrants, cultivation.now)
+      return (
+        <div className={wrap} onClick={cultivation.kind === "grant" ? stopPropagation : undefined}>
+          <CultivationStagePill stage={stage} />
+        </div>
+      )
+    }
+    case "fcLastTouch": {
+      if (!cultivation) return <div className={wrap}>—</div>
+      const gl = cultivation.kind === "rollup" ? cultivation.items : [grant]
+      const { relative, touchType } = formatFunderLastTouch(gl, cultivation.now)
+      return (
+        <div className={wrap}>
+          <div className="font-medium text-foreground">{relative}</div>
+          {touchType ? <div className="truncate text-[10px] text-muted-foreground">{touchType}</div> : null}
+        </div>
+      )
+    }
+    case "fcNextStep": {
+      if (!cultivation) return <div className={wrap}>—</div>
+      const gl = cultivation.kind === "rollup" ? cultivation.items : [grant]
+      const next = nextStepForFunder(gl, cultivation.now)
+      if (!next) {
+        return (
+          <div className={cn(wrap, "flex items-center gap-1.5 italic text-muted-foreground")}>
+            <span>(no next step set)</span>
+            {cultivation.kind === "rollup" ? null : <Plus className="h-3.5 w-3.5 shrink-0 opacity-60" aria-hidden />}
+          </div>
+        )
+      }
+      return (
+        <div className={cn(wrap, next.overdue ? "font-medium text-destructive" : "text-foreground")}>{next.line}</div>
+      )
+    }
+    case "fcLifetimeGiving": {
+      if (!cultivation) return <div className={wrap}>—</div>
+      const gl = cultivation.kind === "rollup" ? cultivation.items : cultivation.funderGrants
+      return (
+        <div className={[wrap, "text-right tabular-nums font-semibold text-foreground"].join(" ")}>
+          {lifetimeGivingLabel(gl, fmtBoard$)}
+        </div>
+      )
+    }
+    case "fcCadence": {
+      if (!cultivation) return <div className={wrap}>—</div>
+      const gl = cultivation.kind === "rollup" ? cultivation.items : cultivation.funderGrants
+      return <div className={wrap}>{cadenceLabel(gl)}</div>
+    }
+    case "fcGrantsWithFunder": {
+      if (!cultivation) return <div className={wrap}>—</div>
+      const n = cultivation.kind === "rollup" ? cultivation.items.length : cultivation.funderGrants.length
+      return (
+        <div className={[wrap, "text-right tabular-nums font-semibold text-foreground"].join(" ")}>
+          {n}
+          <div className="text-[10px] font-normal text-muted-foreground">w/ this funder</div>
+        </div>
+      )
+    }
     default:
       return <div className={wrap}>—</div>
   }
@@ -2306,6 +3056,8 @@ function SortableColumnHeader({
   showPinnedScrollShadow = false,
   pinnedTone = "default",
   funderPortfolioLens = false,
+  funderPortfolioCultivationLens = false,
+  cultivationWhiteTable = false,
 }: {
   col: ColDef
   /** Overrides canonical column label (e.g. Board / Leadership template). */
@@ -2322,8 +3074,12 @@ function SortableColumnHeader({
   pinnedTone?: "default" | "clear" | "solid"
   /** Funder portfolio: column sort is fixed by funder rollup — fp columns show static headers. */
   funderPortfolioLens?: boolean
+  /** Cultivation lens uses real sortable headers (not frozen fp columns). */
+  funderPortfolioCultivationLens?: boolean
+  /** Funder cultivation (relationship stage): match paper-white table chrome. */
+  cultivationWhiteTable?: boolean
 }) {
-  const active = sortKey === col.key
+  const active = sortKey === col.key || (funderPortfolioCultivationLens && !sortKey && col.key === "fcLastTouch")
   const Icon = !active ? ArrowUpDown : sortDir === "asc" ? ArrowUp : ArrowDown
   const isGrant = col.key === "grant"
   const columnTitle = headerLabel ?? col.label
@@ -2332,10 +3088,14 @@ function SortableColumnHeader({
     col.key === "deadline" ||
     col.key === "amountRequested" ||
     col.key === "notificationDate" ||
-    col.key === "fpTotalAwarded"
-  const funderPortfolioFrozenCol = funderPortfolioLens && col.key.startsWith("fp")
+    col.key === "fpTotalAwarded" ||
+    col.key === "fcLifetimeGiving" ||
+    col.key === "fcGrantsWithFunder"
+  const funderPortfolioFrozenCol =
+    funderPortfolioLens && !funderPortfolioCultivationLens && col.key.startsWith("fp")
   const op = variant === "operator"
-  const opGrantHeaderBg = "bg-background dark:bg-background"
+  const opGrantHeaderBg =
+    cultivationWhiteTable && op ? "bg-white dark:bg-card" : "bg-background dark:bg-background"
 
   const frozenPortfolioHeader = (
     <div
@@ -2358,7 +3118,8 @@ function SortableColumnHeader({
       type="button"
       onClick={() => onSort(col.key)}
       className={cn(
-        "flex min-h-[36px] w-full min-w-0 items-center gap-1 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide transition-colors hover:bg-muted/60",
+        "flex min-h-[36px] w-full min-w-0 items-center gap-1 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide transition-colors",
+        cultivationWhiteTable && op ? "hover:bg-zinc-100/90 dark:hover:bg-muted/50" : "hover:bg-muted/60",
         rightAlign && "justify-end text-right",
         active ? "text-foreground" : "text-muted-foreground",
       )}
@@ -2417,7 +3178,10 @@ function SortableColumnHeader({
           onDraggingChange(col.key)
         }}
         onDragEnd={() => onDraggingChange(null)}
-        className="flex h-full w-full cursor-grab touch-none items-center justify-center border-r border-transparent text-muted-foreground hover:bg-muted/50 hover:text-foreground active:cursor-grabbing"
+        className={cn(
+          "flex h-full w-full cursor-grab touch-none items-center justify-center border-r border-transparent text-muted-foreground hover:text-foreground active:cursor-grabbing",
+          cultivationWhiteTable && op ? "hover:bg-zinc-100/80 dark:hover:bg-muted/50" : "hover:bg-muted/50",
+        )}
         aria-label={`Reorder ${columnTitle} column`}
         title="Drag to reorder column"
       >
@@ -2432,13 +3196,19 @@ function TimeRangeFilterChip({
   filters,
   now,
   onPatch,
+  /** Preset treated as “default” for chip highlight + reset (roll-up lens defaults to all time). */
+  periodBaselinePreset = "ytd",
+  /** Applied when clearing the period chip; defaults to YTD patch. */
+  periodResetPatch,
 }: {
   filters: Record<string, string | null>
   now: Date
   onPatch: (patch: Record<string, string | null>) => void
+  periodBaselinePreset?: string
+  periodResetPatch?: Record<string, string | null>
 }) {
   const preset = filters.timeRangePreset ?? "ytd"
-  const isDefaultYtd = preset === "ytd"
+  const isDefault = preset === periodBaselinePreset
 
   const displayValue =
     preset === "custom" && filters.timeRangeCustomStart && filters.timeRangeCustomEnd
@@ -2463,6 +3233,8 @@ function TimeRangeFilterChip({
     }
   }
 
+  const resetPatch = periodResetPatch ?? defaultTimeRangeFilterPatch()
+
   return (
     <Popover>
       <PopoverTrigger asChild>
@@ -2470,7 +3242,7 @@ function TimeRangeFilterChip({
           type="button"
           className={[
             "inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border px-2 text-[11px]",
-            !isDefaultYtd
+            !isDefault
               ? "border-primary/25 bg-primary/5 text-foreground"
               : "border-border text-muted-foreground hover:text-foreground",
           ].join(" ")}
@@ -2481,16 +3253,16 @@ function TimeRangeFilterChip({
             <span className="text-muted-foreground/60">:</span>
             <span className="max-w-[11rem] shrink truncate font-semibold text-primary">{displayValue}</span>
           </>
-          {!isDefaultYtd ? (
+          {!isDefault ? (
             <span
               role="button"
               onClick={(e) => {
                 e.preventDefault()
                 e.stopPropagation()
-                onPatch({ ...defaultTimeRangeFilterPatch() })
+                onPatch(resetPatch)
               }}
               className="ml-0.5 rounded p-0.5 hover:bg-primary/10"
-              aria-label="Reset to this year (YTD)"
+              aria-label="Reset period filter"
             >
               <X className="h-2.5 w-2.5" />
             </span>
@@ -2608,7 +3380,15 @@ function FilterChip({
   )
 }
 
-function GroupByPicker({ value, onChange }: { value: GroupBy; onChange: (v: GroupBy) => void }) {
+function GroupByPicker({
+  value,
+  onChange,
+  showCultivationStageOption,
+}: {
+  value: GroupBy
+  onChange: (v: GroupBy) => void
+  showCultivationStageOption?: boolean
+}) {
   const options: { id: GroupBy; label: string }[] = [
     { id: "stage", label: "Stage" },
     { id: "owner", label: "Owner" },
@@ -2616,6 +3396,7 @@ function GroupByPicker({ value, onChange }: { value: GroupBy; onChange: (v: Grou
     { id: "funder", label: "Funder" },
     { id: "projectGroup", label: "Project group" },
     { id: "deadline", label: "Deadline" },
+    ...(showCultivationStageOption ? ([{ id: "cultivationStage" as const, label: "Cultivation stage" }] as const) : []),
     { id: "none", label: "No grouping" },
   ]
   const current = options.find((o) => o.id === value)

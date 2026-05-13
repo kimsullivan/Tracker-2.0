@@ -272,6 +272,7 @@ function parseTableGroupBy(t: string): GroupBy | null {
   if (t.includes("stage") || (t.includes("status") && !/\bsort\b/.test(t))) return "stage"
   if (t.includes("project")) return "projectGroup"
   if (t.includes("deadline")) return "deadline"
+  if (t.includes("cultivation")) return "cultivationStage"
   if (t.includes("funder")) return "funder"
   return null
 }
@@ -653,6 +654,7 @@ export function matchMixAltAgentTurn(raw: string, snap: MixAltAgentSnapshot): Mi
       funder: "Funder portfolio",
       projectGroup: "Project group",
       deadline: "Deadline",
+      cultivationStage: "Cultivation stage",
       none: "No grouping",
     }
     return {
