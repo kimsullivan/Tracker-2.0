@@ -402,7 +402,11 @@ function formatGroupExportTitle(key: string, by: GroupBy): string {
   return key
 }
 
+/** Operator only: plain table — no Instrumentl lens, no grouping/filter controls in toolbar. */
+export const OPERATOR_BARE_GRANTS_VIEW_ID = "bare-all-grants" as const
+
 const SAVED_VIEWS = [
+  { id: OPERATOR_BARE_GRANTS_VIEW_ID, label: "All grants" },
   { id: "all", label: "All active" },
   { id: "board-leadership", label: "Board / Leadership" },
   { id: "funder-portfolio", label: "Funder portfolio" },
@@ -643,11 +647,19 @@ export function AllGrants({
     const filtered = SAVED_VIEWS.filter(
       (v) =>
         variant === "operator" ||
-        (v.id !== "board-leadership" && v.id !== "funder-portfolio" && v.id !== "funder-portfolio-v2"),
+        (v.id !== "board-leadership" &&
+          v.id !== "funder-portfolio" &&
+          v.id !== "funder-portfolio-v2" &&
+          v.id !== OPERATOR_BARE_GRANTS_VIEW_ID),
     )
+    const bareEntry =
+      variant === "operator" ? SAVED_VIEWS.find((v) => v.id === OPERATOR_BARE_GRANTS_VIEW_ID) : undefined
     return {
+      bareAllGrants: bareEntry ? [bareEntry] : [],
       instrumentl: filtered.filter((v) => INSTRUMENTL_CANNED_VIEW_IDS.has(v.id)),
-      customPreset: filtered.filter((v) => !INSTRUMENTL_CANNED_VIEW_IDS.has(v.id)),
+      customPreset: filtered.filter(
+        (v) => !INSTRUMENTL_CANNED_VIEW_IDS.has(v.id) && v.id !== OPERATOR_BARE_GRANTS_VIEW_ID,
+      ),
     }
   }, [variant])
 
@@ -658,6 +670,8 @@ export function AllGrants({
   const funderPortfolioV2Lens = variant === "operator" && builtinSlice === "funder-portfolio-v2"
   /** Funder cultivation (v2 + relationship stage groups): paper-white table chrome. */
   const cultivationWhiteTable = funderPortfolioV2Lens && groupBy === "cultivationStage"
+
+  const isBareAllGrantsBuiltin = variant === "operator" && builtinSlice === OPERATOR_BARE_GRANTS_VIEW_ID
 
   const router = useRouter()
   const pathname = usePathname()
@@ -738,6 +752,29 @@ export function AllGrants({
     setColumnLayoutBaseline(snapshotOperatorColumnLayout(defVis, defOrder))
     setFpKpi({ ...DEFAULT_FUNDER_PORTFOLIO_KPI })
     setFpKpiBaseline({ ...DEFAULT_FUNDER_PORTFOLIO_KPI })
+  }, [])
+
+  const applyBareAllGrantsPreset = useCallback(() => {
+    setGroupBy("none")
+    setSortKey(null)
+    setSortDir("asc")
+    const defVis = new Set(COLUMNS.filter((c) => c.defaultVisible).map((c) => c.key))
+    const defOrder = [...NON_GRANT_COLUMN_KEYS] as ColKey[]
+    setVisibleCols(defVis)
+    setColOrder(defOrder)
+    setColumnLayoutBaseline(snapshotOperatorColumnLayout(defVis, defOrder))
+    setFpKpi({ ...DEFAULT_FUNDER_PORTFOLIO_KPI })
+    setFpKpiBaseline({ ...DEFAULT_FUNDER_PORTFOLIO_KPI })
+    const nextFilters = migrateToolbarTimeRangeFilters({
+      ...defaultTimeRangeFilterPatch(),
+      timeRangePreset: "all",
+      timeRangeCustomStart: null,
+      timeRangeCustomEnd: null,
+      funderType: null,
+      owner: null,
+    })
+    setFilters(nextFilters)
+    setFilterBaseline({ ...nextFilters })
   }, [])
 
   const tableScrollRef = useRef<HTMLDivElement>(null)
@@ -1179,6 +1216,10 @@ export function AllGrants({
         applyFunderPortfolioV2Preset()
         return
       }
+      if (id === OPERATOR_BARE_GRANTS_VIEW_ID) {
+        applyBareAllGrantsPreset()
+        return
+      }
       resetOperatorTableDefaults()
       setFilters((prev) => {
         const next = applyViewFilters(id, prev)
@@ -1186,7 +1227,16 @@ export function AllGrants({
         return next
       })
     },
-    [variant, customViews, applyBoardLeadershipPreset, applyFunderPortfolioPreset, applyFunderPortfolioV2Preset, resetOperatorTableDefaults, applyOperatorViewConfig],
+    [
+      variant,
+      customViews,
+      applyBoardLeadershipPreset,
+      applyFunderPortfolioPreset,
+      applyFunderPortfolioV2Preset,
+      applyBareAllGrantsPreset,
+      resetOperatorTableDefaults,
+      applyOperatorViewConfig,
+    ],
   )
 
   const forkIfCannedOperatorEdit = useCallback(() => {
@@ -1356,9 +1406,10 @@ export function AllGrants({
     [selectedViewId, customViews, groupBy, visibleCols, colOrder, filters, fpKpi, operatorPipelineFourthMetric],
   )
 
-  /** Operator: export (PDF/CSV) on pipeline “Where are we?” (`all`) plus Board & Funder built-ins. */
+  /** Operator: export (PDF/CSV) on pipeline “Where are we?” (`all`), bare All grants table, Board & Funder built-ins. */
   const showOperatorExport =
-    variant === "operator" && (boardAudience || funderPortfolioLens || selectedViewId === "all")
+    variant === "operator" &&
+    (boardAudience || funderPortfolioLens || selectedViewId === "all" || selectedViewId === OPERATOR_BARE_GRANTS_VIEW_ID)
 
   const queueLensExport = useCallback(
     (format: "pdf" | "csv", opts?: { silent?: boolean }) => {
@@ -1369,7 +1420,8 @@ export function AllGrants({
       } else if (funderPortfolioLens) {
         base = funderPortfolioV2Lens ? `Cultivation portfolio · ${periodLabel}` : `Funder portfolio · ${periodLabel}`
       } else {
-        const viewName = operatorBuiltinAllLabel ?? "All active"
+        const viewName =
+          isBareAllGrantsBuiltin ? "All grants" : operatorBuiltinAllLabel ?? "All active"
         base = `${viewName} · ${periodLabel}`
       }
 
@@ -1434,6 +1486,7 @@ export function AllGrants({
       boardAudience,
       funderPortfolioLens,
       funderPortfolioV2Lens,
+      isBareAllGrantsBuiltin,
       filters,
       portfolioNow,
       operatorBuiltinAllLabel,
@@ -1570,6 +1623,24 @@ export function AllGrants({
               <SelectValue placeholder="Select view" />
             </SelectTrigger>
             <SelectContent>
+              {variant === "operator" && viewPickerGroups.bareAllGrants.length > 0 ? (
+                <SelectGroup>
+                  <SelectLabel className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    General
+                  </SelectLabel>
+                  {viewPickerGroups.bareAllGrants.map((v) => (
+                    <SelectItem key={v.id} value={v.id} className="text-xs">
+                      {v.label}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              ) : null}
+              {variant === "operator" && viewPickerGroups.bareAllGrants.length > 0 &&
+              (viewPickerGroups.instrumentl.length > 0 ||
+                viewPickerGroups.customPreset.length > 0 ||
+                customViews.length > 0) ? (
+                <SelectSeparator />
+              ) : null}
               {viewPickerGroups.instrumentl.length > 0 ? (
                 <SelectGroup>
                   <SelectLabel className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
@@ -1628,16 +1699,25 @@ export function AllGrants({
           <TimeRangeFilterChip
             filters={filters}
             now={portfolioNow}
-            periodBaselinePreset={funderPortfolioV2Lens ? "all" : "ytd"}
+            periodBaselinePreset={
+              isBareAllGrantsBuiltin ? "all" : funderPortfolioV2Lens ? "all" : "ytd"
+            }
             periodResetPatch={
-              funderPortfolioV2Lens
+              isBareAllGrantsBuiltin
                 ? migrateToolbarTimeRangeFilters({
                     ...defaultTimeRangeFilterPatch(),
                     timeRangePreset: "all",
                     timeRangeCustomStart: null,
                     timeRangeCustomEnd: null,
                   })
-                : undefined
+                : funderPortfolioV2Lens
+                  ? migrateToolbarTimeRangeFilters({
+                      ...defaultTimeRangeFilterPatch(),
+                      timeRangePreset: "all",
+                      timeRangeCustomStart: null,
+                      timeRangeCustomEnd: null,
+                    })
+                  : undefined
             }
             onPatch={(patch) => {
               forkIfCannedOperatorEdit()
@@ -1728,7 +1808,9 @@ export function AllGrants({
               forkIfCannedOperatorEdit()
               setGroupBy(v)
             }}
-            showCultivationStageOption={funderPortfolioV2Lens || groupBy === "cultivationStage"}
+            showCultivationStageOption={
+              funderPortfolioV2Lens || groupBy === "cultivationStage" || isBareAllGrantsBuiltin
+            }
           />
         </div>
 
